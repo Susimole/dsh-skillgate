@@ -59,6 +59,8 @@ export function apply(ctx, config = {}) {
 
   let cached = null
   let cachedAt = 0
+  // state.json 存在但解析不了时，先把原文件留个备份，别让默认值把它盖掉。
+  let corruptBackup = null
 
   function bucket(name) {
     if (typeof name !== 'string') return 'daily'
@@ -71,17 +73,31 @@ export function apply(ctx, config = {}) {
   async function loadState() {
     const now = Date.now()
     if (cached && now - cachedAt < 500) return cached
+    let raw = null
     try {
-      const parsed = JSON.parse(await readFile(statePath, 'utf8'))
+      raw = await readFile(statePath, 'utf8')
+    } catch {
+      raw = null // 文件还不存在：正常，用默认值
+    }
+    let parsed = null
+    if (raw !== null) {
+      try {
+        parsed = JSON.parse(raw)
+      } catch {
+        // 文件在、但读不成 JSON：留备份，然后用默认可用的那套继续跑（fail-open）。
+        if (corruptBackup === null) corruptBackup = raw
+      }
+    }
+    if (parsed && typeof parsed === 'object') {
       cached = {
         ...defaultState(),
         ...parsed,
-        sessions: { ...(parsed && parsed.sessions) },
-        meta: { ...(parsed && parsed.meta) },
-        deadlines: { ...(parsed && parsed.deadlines) },
+        sessions: { ...(parsed.sessions) },
+        meta: { ...(parsed.meta) },
+        deadlines: { ...(parsed.deadlines) },
       }
-    } catch {
-      cached = cached || defaultState()
+    } else if (!cached) {
+      cached = defaultState()
     }
     cachedAt = now
     return cached
@@ -91,6 +107,15 @@ export function apply(ctx, config = {}) {
     cached = state
     cachedAt = Date.now()
     await mkdir(dirname(statePath), { recursive: true })
+    if (corruptBackup !== null) {
+      const backup = corruptBackup
+      corruptBackup = null
+      try {
+        await writeFile(`${statePath}.bad-${Date.now()}`, backup, 'utf8')
+      } catch {
+        // 备份失败也照常往下写，不能因为留备份把主流程挡住
+      }
+    }
     await writeFile(statePath, JSON.stringify(state, null, 2), 'utf8')
   }
 
@@ -211,7 +236,7 @@ export function apply(ctx, config = {}) {
 
   // 只看真正由人写进来的消息：我们自己注入的、运行时上下文、时间戳都要跳过。
   const IGNORED_SOURCES = new Set([
-    'skillgate-tier', 'time-context', 'runtime-context', 'skill-catalog', 'skill-invocation',
+    'skillgate-tier', 'skillgate-time', 'time-context', 'runtime-context', 'skill-catalog', 'skill-invocation',
   ])
 
   function pickUserText(payload, decision) {
@@ -465,6 +490,9 @@ export function apply(ctx, config = {}) {
             state.enabled = arg === 'on'
             await saveState(state)
             snapshots.clear()
+            // 关掉时模型手里还留着上一条档位清单；再打开必须重发一次，
+            // 否则它会一直按旧档位用技能，直到下一次换档才纠正。
+            lastTier.delete(sessionId)
             return { kind: 'success', text: arg === 'off' ? '已关闭档位改写' : '已开启档位改写' }
           }
           const tier = TIER_ALIASES[arg]
