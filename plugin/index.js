@@ -261,7 +261,7 @@ export function apply(ctx, config = {}) {
       : `已超 ${formatDuration(-left)}`
   }
 
-  function buildTimeMessage(state, sessionId, now) {
+  async function buildTimeMessage(state, sessionId, now) {
     if (!sessionStart.has(sessionId)) sessionStart.set(sessionId, now)
     const started = sessionStart.get(sessionId)
     const deadline = state.deadlines && state.deadlines[sessionId]
@@ -270,7 +270,11 @@ export function apply(ctx, config = {}) {
     // 没有截止、也没闲够久，就不发，省 token。
     if (!deadline && now - lastAt < timeGapMs) return null
     lastTimeInjected.set(sessionId, now)
-    if (overdue) deadline.remindedAt = now
+    if (overdue) {
+      // 必须落盘：cached 每 500ms 会从磁盘重读，不写回的话提醒会每轮重复。
+      deadline.remindedAt = now
+      await saveState(state)
+    }
     const lines = [
       '<system-reminder>',
       `⏱ ${formatClock(now)} · 本会话 ${formatDuration(now - started)} · ${describeDeadline(deadline, now)}`,
@@ -427,7 +431,7 @@ export function apply(ctx, config = {}) {
             })
           }
         }
-        const timeMessage = buildTimeMessage(state, sessionId, now)
+        const timeMessage = await buildTimeMessage(state, sessionId, now)
         if (timeMessage) out.push(timeMessage)
         if (out.length === decision.messages.length) return decision
         return { ...decision, messages: out }
