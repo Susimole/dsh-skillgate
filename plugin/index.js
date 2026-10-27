@@ -32,7 +32,7 @@ const TIER_ALIASES = {
 const TIER_LABEL = { daily: '日常', work: '工作', deliver: '交付' }
 
 function defaultState() {
-  return { version: 1, enabled: true, default: 'daily', sessions: {} }
+  return { version: 1, enabled: true, default: 'daily', sessions: {}, meta: {}, deadlines: {} }
 }
 
 export function apply(ctx, config = {}) {
@@ -44,6 +44,13 @@ export function apply(ctx, config = {}) {
 
   const work = new Set(Array.isArray(config.workSkills) ? config.workSkills : DEFAULT_WORK)
   const deliver = new Set(Array.isArray(config.deliverSkills) ? config.deliverSkills : DEFAULT_DELIVER)
+
+  // 手动切档后的静默期：这段时间内规则不覆盖用户的选择。
+  const manualHoldMs = Number.isFinite(config.manualHoldMs) ? config.manualHoldMs : 10 * 60_000
+  // 时间行不是每轮都值得发，闲得久了才发一条。
+  const timeGapMs = Number.isFinite(config.timeGapMs) ? config.timeGapMs : 10 * 60_000
+  // 「继续」多久之内算还在干同一件事。
+  const holdWindowMs = Number.isFinite(config.holdWindowMs) ? config.holdWindowMs : 30 * 60_000
 
   // sessionId|tier -> { at, entries }。清单很少变，缓存 60 秒，免得每步都扫技能目录。
   const snapshots = new Map()
@@ -66,7 +73,13 @@ export function apply(ctx, config = {}) {
     if (cached && now - cachedAt < 500) return cached
     try {
       const parsed = JSON.parse(await readFile(statePath, 'utf8'))
-      cached = { ...defaultState(), ...parsed, sessions: { ...(parsed && parsed.sessions) } }
+      cached = {
+        ...defaultState(),
+        ...parsed,
+        sessions: { ...(parsed && parsed.sessions) },
+        meta: { ...(parsed && parsed.meta) },
+        deadlines: { ...(parsed && parsed.deadlines) },
+      }
     } catch {
       cached = cached || defaultState()
     }
@@ -165,26 +178,34 @@ export function apply(ctx, config = {}) {
     ],
     exit: ['好了结束', '搞定', '收工', '先这样', '晚安', '只聊天', '别管这个', '先不弄了'],
     veto: ['先别动手', '仅讨论', '只讨论', '几个技能', '先别改'],
+    enterDeliver: ['做成表', '出个图', '出张图', '生成表格', '做个表', '导出', '交接文件', '生成报告', '做个图', '出个表'],
+    hold: ['继续', '接着干', '接着做', '继续吧'],
   }
 
   async function loadLexicon() {
     try {
       const parsed = JSON.parse(await readFile(lexiconPath, 'utf8'))
+      const pick = (key) => (Array.isArray(parsed[key]) ? parsed[key] : DEFAULT_LEXICON[key])
       return {
-        enterWork: Array.isArray(parsed.enterWork) ? parsed.enterWork : DEFAULT_LEXICON.enterWork,
-        exit: Array.isArray(parsed.exit) ? parsed.exit : DEFAULT_LEXICON.exit,
-        veto: Array.isArray(parsed.veto) ? parsed.veto : DEFAULT_LEXICON.veto,
+        enterWork: pick('enterWork'),
+        enterDeliver: pick('enterDeliver'),
+        exit: pick('exit'),
+        veto: pick('veto'),
+        hold: pick('hold'),
       }
     } catch {
       return DEFAULT_LEXICON
     }
   }
 
-  // 否决 > 退出 > 进入：「先别动手，帮我看看」应当按否决处理。
+  // 否决 > 退出 > 交付 > 进入 > 续行。
+  // 「先别动手，帮我看看」按否决处理；「继续」只在已经干着活时才算数（见 hold 分支）。
   function matchTier(text, lexicon) {
     for (const rule of lexicon.veto) if (rule && text.includes(rule)) return { bucket: 'veto', rule, tier: null }
     for (const rule of lexicon.exit) if (rule && text.includes(rule)) return { bucket: 'exit', rule, tier: 'daily' }
+    for (const rule of lexicon.enterDeliver) if (rule && text.includes(rule)) return { bucket: 'enter-deliver', rule, tier: 'deliver' }
     for (const rule of lexicon.enterWork) if (rule && text.includes(rule)) return { bucket: 'enter-work', rule, tier: 'work' }
+    for (const rule of lexicon.hold) if (rule && text.includes(rule)) return { bucket: 'hold', rule, tier: null }
     return null
   }
 
@@ -211,6 +232,132 @@ export function apply(ctx, config = {}) {
     return ''
   }
 
+  // ---- 时间感知（v0.2） ----
+  // 受同一条运行时限制：只有轮首注入会落盘，所以时间行在轮首给，
+  // 轮中要精确时刻就让模型自己调 now()。
+  const sessionStart = new Map()
+  const lastTimeInjected = new Map()
+
+  function formatClock(ms) {
+    const d = new Date(ms)
+    const pad = (n) => String(n).padStart(2, '0')
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
+  }
+
+  function formatDuration(ms) {
+    const total = Math.max(0, Math.round(ms / 60000))
+    if (total < 1) return '不到 1 分钟'
+    if (total < 60) return `${total} 分钟`
+    const hours = Math.floor(total / 60)
+    const minutes = total % 60
+    return minutes ? `${hours} 小时 ${minutes} 分钟` : `${hours} 小时`
+  }
+
+  function describeDeadline(deadline, now) {
+    if (!deadline) return '没有截止时间'
+    const left = deadline.at - now
+    return left >= 0
+      ? `截止 ${formatClock(deadline.at)}（剩 ${formatDuration(left)}）`
+      : `已超 ${formatDuration(-left)}`
+  }
+
+  function buildTimeMessage(state, sessionId, now) {
+    if (!sessionStart.has(sessionId)) sessionStart.set(sessionId, now)
+    const started = sessionStart.get(sessionId)
+    const deadline = state.deadlines && state.deadlines[sessionId]
+    const lastAt = lastTimeInjected.get(sessionId) || 0
+    const overdue = Boolean(deadline) && deadline.at <= now && !deadline.remindedAt
+    // 没有截止、也没闲够久，就不发，省 token。
+    if (!deadline && now - lastAt < timeGapMs) return null
+    lastTimeInjected.set(sessionId, now)
+    if (overdue) deadline.remindedAt = now
+    const lines = [
+      '<system-reminder>',
+      `⏱ ${formatClock(now)} · 本会话 ${formatDuration(now - started)} · ${describeDeadline(deadline, now)}`,
+    ]
+    if (overdue) {
+      lines.push(deadline.note
+        ? `截止已到（${deadline.note}）：把手上这一步做完就停，然后汇报进度与剩余项。`
+        : '截止已到：把手上这一步做完就停，然后汇报进度与剩余项。')
+    }
+    lines.push('</system-reminder>')
+    const text = lines.join('\n')
+    return deepFreeze(structuredClone({
+      role: 'user',
+      id: randomUUID(),
+      content: [{ type: 'text', text }],
+      source: { kind: 'skillgate-time', form: 'snapshot', sections: [{ name: 'skillgate-time', text }] },
+    }))
+  }
+
+  function makeTool(name, description, parameters, run) {
+    return {
+      name,
+      description,
+      parameters,
+      output: {
+        schema: { type: 'object', properties: { text: { type: 'string' } } },
+        render: (_args, value) => [{ type: 'text', text: String((value && value.text) || '') }],
+      },
+      execute: async (args, exec) => ({ text: String(await run(args || {}, exec)) }),
+    }
+  }
+
+  try {
+    const tools = ctx.get('tools')
+    if (tools) {
+      tools.register(makeTool(
+        'now',
+        '读取当前时间：本机时刻、本会话已进行的时长、以及有没有截止时间。想确认过了多久时调用它，不要凭感觉估。',
+        { type: 'object', properties: {}, additionalProperties: false },
+        async (_args, exec) => {
+          const sessionId = String((exec && exec.agent && exec.agent.id) || '')
+          const state = await loadState()
+          const now = Date.now()
+          const started = sessionStart.get(sessionId) || now
+          return `⏱ ${formatClock(now)} · 本会话 ${formatDuration(now - started)} · ${describeDeadline(state.deadlines && state.deadlines[sessionId], now)}`
+        },
+      ))
+      tools.register(makeTool(
+        'set_deadline',
+        '给自己设一个截止时间。只收相对分钟数，绝对时刻由系统换算——不要自己算时间点。',
+        {
+          type: 'object',
+          properties: {
+            afterMinutes: { type: 'number', description: '多少分钟后截止' },
+            note: { type: 'string', description: '这次截止要做完什么，用于到点提醒' },
+          },
+          required: ['afterMinutes'],
+        },
+        async (args, exec) => {
+          const sessionId = String((exec && exec.agent && exec.agent.id) || '')
+          const minutes = Number(args.afterMinutes)
+          if (!Number.isFinite(minutes) || minutes <= 0) return '参数不对：afterMinutes 必须是正数分钟。'
+          const state = await loadState()
+          const at = Date.now() + minutes * 60000
+          state.deadlines[sessionId] = { at, note: typeof args.note === 'string' ? args.note : '', remindedAt: null }
+          await saveState(state)
+          return `已设截止 ${formatClock(at)}（${formatDuration(minutes * 60000)} 后）${args.note ? '：' + args.note : ''}。到点我会在下一轮开头提醒收尾。`
+        },
+      ))
+      tools.register(makeTool(
+        'clear_deadline',
+        '清掉当前会话的截止时间。收尾完成后调用。',
+        { type: 'object', properties: {}, additionalProperties: false },
+        async (_args, exec) => {
+          const sessionId = String((exec && exec.agent && exec.agent.id) || '')
+          const state = await loadState()
+          if (!state.deadlines[sessionId]) return '当前没有截止时间。'
+          delete state.deadlines[sessionId]
+          await saveState(state)
+          return '已清除截止时间。'
+        },
+      ))
+    }
+  } catch {
+    // 工具注册失败不影响档位
+  }
+
   try {
     ctx.on('agent/pre-step', async (payload, next) => {
       const decision = await next()
@@ -225,41 +372,65 @@ export function apply(ctx, config = {}) {
         let tier = (state.sessions && state.sessions[sessionId]) || state.default || 'daily'
 
         // 先看这一轮用户说了什么：显式指令优先于当前档位。
+        const now = Date.now()
+        const meta = (state.meta && state.meta[sessionId]) || {}
         const text = pickUserText(payload, decision)
         if (text) {
-          const hit = matchTier(text, await loadLexicon())
-          if (hit) {
-            void appendLog({
-              event: 'rule',
-              sessionId,
-              bucket: hit.bucket,
-              rule: hit.rule,
-              text: text.slice(0, 120),
-              from: tier,
-              to: hit.tier || tier,
-            })
-            if (hit.tier && hit.tier !== tier) {
-              tier = hit.tier
-              state.sessions[sessionId] = tier
-              await saveState(state)
+          const manualLocked = Number(meta.manualAt || 0) > 0 && now - Number(meta.manualAt) < manualHoldMs
+          if (manualLocked) {
+            void appendLog({ event: 'rule-skipped', reason: 'manual-hold', sessionId, text: text.slice(0, 120) })
+          } else {
+            const hit = matchTier(text, await loadLexicon())
+            if (hit) {
+              let nextTier = hit.tier
+              // 「继续」只有在最近干过活时才算回到工作，否则只是聊天里的接话。
+              if (hit.bucket === 'hold') {
+                const lastWorkAt = Number(meta.lastWorkAt || 0)
+                nextTier = tier === 'daily' && lastWorkAt > 0 && now - lastWorkAt < holdWindowMs ? 'work' : null
+              }
+              void appendLog({
+                event: 'rule',
+                sessionId,
+                bucket: hit.bucket,
+                rule: hit.rule,
+                text: text.slice(0, 120),
+                from: tier,
+                to: nextTier || tier,
+              })
+              if (nextTier && nextTier !== tier) {
+                tier = nextTier
+                state.sessions[sessionId] = tier
+                const nextMeta = { ...(state.meta[sessionId] || {}) }
+                if (tier === 'work' || tier === 'deliver') nextMeta.lastWorkAt = now
+                state.meta[sessionId] = nextMeta
+                await saveState(state)
+              }
             }
           }
         }
 
-        // 档位没变就不再重复注入——上一轮那条还在历史里。
-        if (lastTier.get(sessionId) === tier) return decision
-        const message = await buildCatalog(payload, tier)
-        if (!message) return decision
-        lastTier.set(sessionId, tier)
-        void appendLog({
-          event: 'inject',
-          sessionId,
-          tier,
-          step,
-          count: message.source.entries.length,
-          names: message.source.entries.map((entry) => entry.name),
-        })
-        return { ...decision, messages: [...decision.messages, message] }
+        // 档位没变就不再重复注入——上一轮那条还在历史里；
+        // 但时间行是独立判断的，不能因为档位没变就一起跳过。
+        const out = [...decision.messages]
+        if (lastTier.get(sessionId) !== tier) {
+          const message = await buildCatalog(payload, tier)
+          if (message) {
+            lastTier.set(sessionId, tier)
+            out.push(message)
+            void appendLog({
+              event: 'inject',
+              sessionId,
+              tier,
+              step,
+              count: message.source.entries.length,
+              names: message.source.entries.map((entry) => entry.name),
+            })
+          }
+        }
+        const timeMessage = buildTimeMessage(state, sessionId, now)
+        if (timeMessage) out.push(timeMessage)
+        if (out.length === decision.messages.length) return decision
+        return { ...decision, messages: out }
       } catch {
         return decision
       }
@@ -295,9 +466,20 @@ export function apply(ctx, config = {}) {
           const tier = TIER_ALIASES[arg]
           if (!tier) return { kind: 'error', text: `不认识的档位：${arg}（可用 daily / work / deliver）` }
           state.sessions[sessionId] = tier
+          // 手动切档后设一段静默期：规则不许立刻把它顶回去。
+          const now = Date.now()
+          state.meta[sessionId] = {
+            ...(state.meta[sessionId] || {}),
+            manualAt: now,
+            ...(tier === 'work' || tier === 'deliver' ? { lastWorkAt: now } : {}),
+          }
           await saveState(state)
           snapshots.clear()
-          return { kind: 'success', text: `已切到 ${TIER_LABEL[tier]} 档，下一轮生效` }
+          lastTier.delete(sessionId)
+          return {
+            kind: 'success',
+            text: `已切到 ${TIER_LABEL[tier]} 档，下一轮生效（${Math.round(manualHoldMs / 60000)} 分钟内规则不覆盖）`,
+          }
         },
       })
     }
