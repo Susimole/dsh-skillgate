@@ -286,9 +286,24 @@ export function apply(ctx, config = {}) {
       : `已超 ${formatDuration(-left)}`
   }
 
+  // 会话起始时刻落盘：插件重装/重启后内存表是空的，
+  // 只靠内存会把「本会话 3 小时」说成「不到 1 分钟」——时间行存在的意义就是不猜时间。
+  async function sessionStarted(state, sessionId, now) {
+    const known = sessionStart.get(sessionId)
+    if (known) return known
+    const meta = (state.meta && state.meta[sessionId]) || {}
+    if (Number(meta.startedAt) > 0) {
+      sessionStart.set(sessionId, Number(meta.startedAt))
+      return Number(meta.startedAt)
+    }
+    sessionStart.set(sessionId, now)
+    state.meta[sessionId] = { ...meta, startedAt: now }
+    await saveState(state)
+    return now
+  }
+
   async function buildTimeMessage(state, sessionId, now) {
-    if (!sessionStart.has(sessionId)) sessionStart.set(sessionId, now)
-    const started = sessionStart.get(sessionId)
+    const started = await sessionStarted(state, sessionId, now)
     const deadline = state.deadlines && state.deadlines[sessionId]
     const lastAt = lastTimeInjected.get(sessionId) || 0
     const overdue = Boolean(deadline) && deadline.at <= now && !deadline.remindedAt
@@ -343,7 +358,7 @@ export function apply(ctx, config = {}) {
           const sessionId = String((exec && exec.agent && exec.agent.id) || '')
           const state = await loadState()
           const now = Date.now()
-          const started = sessionStart.get(sessionId) || now
+          const started = await sessionStarted(state, sessionId, now)
           return `⏱ ${formatClock(now)} · 本会话 ${formatDuration(now - started)} · ${describeDeadline(state.deadlines && state.deadlines[sessionId], now)}`
         },
       ))

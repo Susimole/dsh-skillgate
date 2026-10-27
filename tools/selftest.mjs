@@ -49,7 +49,7 @@ function userMsg(text, kind = 'user') {
 
 async function boot(options = {}) {
   const { apply } = await import(MODULE)
-  const dir = await mkdtemp(join(tmpdir(), 'sg-'))
+  const dir = options.dir || (await mkdtemp(join(tmpdir(), 'sg-')))
   const statePath = join(dir, 'state.json')
   const handlers = new Map()
   const tools = new Map()
@@ -332,6 +332,22 @@ await test('历史里的时间行不会被当成用户原话（备注里的「�
   assert.equal(catalog && catalog.source.tier, 'daily', '把时间行当成了用户原话，切了档')
   assert.equal((await g.readOr({ sessions: {} })).sessions.s1, undefined)
   await g.cleanup()
+})
+
+await test('插件重装后「本会话时长」不归零（起始时刻落盘）', async () => {
+  const a = await boot()
+  await a.turn('你好')
+  const saved = await a.read()
+  assert.ok(saved.meta.s1.startedAt > 0, '会话起始时刻没落盘')
+
+  // 模拟重装：新实例吃同一个 state.json
+  const b = await boot({ dir: a.dir })
+  const state = await b.read()
+  state.meta.s1.startedAt = Date.now() - 45 * 60000
+  await b.write(state)
+  const { added } = await b.turn('嗯')
+  assert.match(bodyOf(timeOf(added)), /45 分钟/, '重装后把会话时长从零算起了')
+  await b.cleanup()
 })
 
 await test('未知技能默认落日常（v0.1 脚手架行为，先钉住）', async () => {
