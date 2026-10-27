@@ -105,14 +105,38 @@ export function apply(ctx, config = {}) {
     ].join('\n')
   }
 
+  function deepFreeze(value) {
+    if (value && typeof value === 'object' && !Object.isFrozen(value)) {
+      Object.freeze(value)
+      for (const key of Object.keys(value)) deepFreeze(value[key])
+    }
+    return value
+  }
+
+  // 与上游 createUserMessage 同形：克隆后深冻结、自带 id、用自己的 source.kind。
+  // 借用别人的 kind 会被会话层当成既有事件类型处理，这是最初没落盘的原因之一。
+  function createTierMessage(tier, entries) {
+    const text = renderCatalog(tier, entries)
+    return deepFreeze(structuredClone({
+      role: 'user',
+      id: randomUUID(),
+      content: [{ type: 'text', text }],
+      source: {
+        kind: 'skillgate-tier',
+        form: 'snapshot',
+        tier,
+        sections: [{ name: 'skillgate-tier', text }],
+        entries,
+      },
+    }))
+  }
+
   async function buildCatalog(payload, tier) {
     const skillsService = ctx.get('skills')
     if (!skillsService) return null
     const key = `${payload.agent.id}|${tier}`
     const hit = snapshots.get(key)
-    if (hit && Date.now() - hit.at < 60_000) {
-      return { role: 'user', id: randomUUID(), content: [{ type: 'text', text: renderCatalog(tier, hit.entries) }], source: { kind: 'skill-catalog', form: 'catalog', update: true, tier, entries: hit.entries } }
-    }
+    if (hit && Date.now() - hit.at < 60_000) return createTierMessage(tier, hit.entries)
     const workingDirectory = ctx.get('workingDirectory')
     let cwd
     try {
@@ -128,12 +152,7 @@ export function apply(ctx, config = {}) {
     if (!snapshot || snapshot.complete !== true) return null
     const kept = snapshot.skills.filter((skill) => bucket(skill && skill.name) === tier)
     snapshots.set(key, { at: Date.now(), entries: kept })
-    return {
-      role: 'user',
-      id: randomUUID(),
-      content: [{ type: 'text', text: renderCatalog(tier, kept) }],
-      source: { kind: 'skill-catalog', form: 'catalog', update: true, tier, entries: kept },
-    }
+    return createTierMessage(tier, kept)
   }
 
   try {
@@ -145,21 +164,22 @@ export function apply(ctx, config = {}) {
         if (!state.enabled) return decision
         const sessionId = String((payload && payload.agent && payload.agent.id) || '')
         const tier = (state.sessions && state.sessions[sessionId]) || state.default || 'daily'
+        const step = Number(payload && payload.step) || 0
+        // 只有轮首那份会被持久化，轮中注入既费 token 又不生效；
+        // 档位没变就不再重复注入——上一轮那条还在历史里。
+        if (step !== 1) return decision
+        if (lastTier.get(sessionId) === tier) return decision
         const message = await buildCatalog(payload, tier)
         if (!message) return decision
-        const step = Number(payload && payload.step) || 0
-        const changed = lastTier.get(sessionId) !== tier
         lastTier.set(sessionId, tier)
-        if (changed || step === 1) {
-          void appendLog({
-            event: 'inject',
-            sessionId,
-            tier,
-            step,
-            count: message.source.entries.length,
-            names: message.source.entries.map((entry) => entry.name),
-          })
-        }
+        void appendLog({
+          event: 'inject',
+          sessionId,
+          tier,
+          step,
+          count: message.source.entries.length,
+          names: message.source.entries.map((entry) => entry.name),
+        })
         return { ...decision, messages: [...decision.messages, message] }
       } catch {
         return decision
