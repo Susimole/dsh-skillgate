@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "SkillGate Probe",
+    "description": "Read-only probe. Reports where the skill catalog is injected and what it looks like, without changing any behaviour."
+  }
+}

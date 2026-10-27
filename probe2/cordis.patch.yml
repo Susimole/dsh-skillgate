@@ -1,0 +1,6 @@
+- insert:
+    - id: skillgate-probe2
+      name: '@local/dsh-skillgate-probe2'
+      config:
+        reportPath: 'D:/Ai_work/skillgate/probe2-report.json'
+        maxSamples: 5

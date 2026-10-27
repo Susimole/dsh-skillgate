@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "SkillGate 探针 4",
+    "description": "只读探针。检查发往模型的请求消息。"
+  }
+}

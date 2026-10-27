@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "SkillGate Probe 2",
+    "description": "Read-only probe. Inspects the messages entering a model step."
+  }
+}

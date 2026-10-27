@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "SkillGate Probe 3",
+    "description": "Read-only probe. Inspects the frozen model request."
+  }
+}

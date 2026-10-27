@@ -1,0 +1,5 @@
+- insert:
+    - id: skillgate-probe4
+      name: '@local/dsh-skillgate-probe4'
+      config:
+        reportPath: 'D:/Ai_work/skillgate/probe4-report.json'

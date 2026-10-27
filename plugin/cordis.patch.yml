@@ -1,0 +1,4 @@
+- insert:
+    - id: skillgate
+      name: '@local/dsh-skillgate'
+      config: {}
