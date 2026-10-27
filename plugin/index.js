@@ -40,6 +40,7 @@ export function apply(ctx, config = {}) {
     ? config.statePath
     : join(homedir(), '.dsh', 'mode', 'state.json')
   const logPath = join(dirname(statePath), 'skillgate.log')
+  const lexiconPath = join(dirname(statePath), 'lexicon.json')
 
   const work = new Set(Array.isArray(config.workSkills) ? config.workSkills : DEFAULT_WORK)
   const deliver = new Set(Array.isArray(config.deliverSkills) ? config.deliverSkills : DEFAULT_DELIVER)
@@ -155,6 +156,61 @@ export function apply(ctx, config = {}) {
     return createTierMessage(tier, kept)
   }
 
+  // ---- 显式指令识别（v0.3 第一刀：纯字面匹配，不做归纳） ----
+  // 种子来自使用者自己的原话；换一个人装，这里应当是空的（定稿 §11 纪律）。
+  const DEFAULT_LEXICON = {
+    enterWork: [
+      '帮我看', '帮我查', '帮我找', '帮我在', '帮我改', '帮我做',
+      '是不是坏了', '用不了', '报错', '继续做', '继续改', '是我做的',
+    ],
+    exit: ['好了结束', '搞定', '收工', '先这样', '晚安', '只聊天', '别管这个', '先不弄了'],
+    veto: ['先别动手', '仅讨论', '只讨论', '几个技能', '先别改'],
+  }
+
+  async function loadLexicon() {
+    try {
+      const parsed = JSON.parse(await readFile(lexiconPath, 'utf8'))
+      return {
+        enterWork: Array.isArray(parsed.enterWork) ? parsed.enterWork : DEFAULT_LEXICON.enterWork,
+        exit: Array.isArray(parsed.exit) ? parsed.exit : DEFAULT_LEXICON.exit,
+        veto: Array.isArray(parsed.veto) ? parsed.veto : DEFAULT_LEXICON.veto,
+      }
+    } catch {
+      return DEFAULT_LEXICON
+    }
+  }
+
+  // 否决 > 退出 > 进入：「先别动手，帮我看看」应当按否决处理。
+  function matchTier(text, lexicon) {
+    for (const rule of lexicon.veto) if (rule && text.includes(rule)) return { bucket: 'veto', rule, tier: null }
+    for (const rule of lexicon.exit) if (rule && text.includes(rule)) return { bucket: 'exit', rule, tier: 'daily' }
+    for (const rule of lexicon.enterWork) if (rule && text.includes(rule)) return { bucket: 'enter-work', rule, tier: 'work' }
+    return null
+  }
+
+  // 只看真正由人写进来的消息：我们自己注入的、运行时上下文、时间戳都要跳过。
+  const IGNORED_SOURCES = new Set([
+    'skillgate-tier', 'time-context', 'runtime-context', 'skill-catalog', 'skill-invocation',
+  ])
+
+  function pickUserText(payload, decision) {
+    for (const list of [payload && payload.messages, decision && decision.messages]) {
+      if (!Array.isArray(list)) continue
+      for (let i = list.length - 1; i >= 0; i -= 1) {
+        const message = list[i]
+        if (!message || message.role !== 'user') continue
+        const kind = message.source && message.source.kind
+        if (kind && IGNORED_SOURCES.has(kind)) continue
+        const text = (message.content || [])
+          .map((block) => (block && typeof block.text === 'string' ? block.text : ''))
+          .join('')
+          .trim()
+        if (text) return text
+      }
+    }
+    return ''
+  }
+
   try {
     ctx.on('agent/pre-step', async (payload, next) => {
       const decision = await next()
@@ -162,12 +218,35 @@ export function apply(ctx, config = {}) {
         if (!decision || decision.kind === 'reject' || !Array.isArray(decision.messages)) return decision
         const state = await loadState()
         if (!state.enabled) return decision
-        const sessionId = String((payload && payload.agent && payload.agent.id) || '')
-        const tier = (state.sessions && state.sessions[sessionId]) || state.default || 'daily'
         const step = Number(payload && payload.step) || 0
-        // 只有轮首那份会被持久化，轮中注入既费 token 又不生效；
-        // 档位没变就不再重复注入——上一轮那条还在历史里。
+        // 只有轮首那份会被持久化，轮中注入既费 token 又不生效。
         if (step !== 1) return decision
+        const sessionId = String((payload && payload.agent && payload.agent.id) || '')
+        let tier = (state.sessions && state.sessions[sessionId]) || state.default || 'daily'
+
+        // 先看这一轮用户说了什么：显式指令优先于当前档位。
+        const text = pickUserText(payload, decision)
+        if (text) {
+          const hit = matchTier(text, await loadLexicon())
+          if (hit) {
+            void appendLog({
+              event: 'rule',
+              sessionId,
+              bucket: hit.bucket,
+              rule: hit.rule,
+              text: text.slice(0, 120),
+              from: tier,
+              to: hit.tier || tier,
+            })
+            if (hit.tier && hit.tier !== tier) {
+              tier = hit.tier
+              state.sessions[sessionId] = tier
+              await saveState(state)
+            }
+          }
+        }
+
+        // 档位没变就不再重复注入——上一轮那条还在历史里。
         if (lastTier.get(sessionId) === tier) return decision
         const message = await buildCatalog(payload, tier)
         if (!message) return decision
