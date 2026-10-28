@@ -467,6 +467,45 @@ await test('classify：没配端点时明确报错', async () => {
   await g.cleanup()
 })
 
+console.log('第五轮：一个技能可以属于多档')
+
+await test('同一技能同时在工作档和日常档：两边清单里都有它', async () => {
+  const g = await boot()
+  await writeFile(join(g.dir, 'tiers.json'), JSON.stringify({
+    work: ['grilling', 'research'],
+    deliver: [],
+    daily: ['grilling'],
+  }), 'utf8')
+  const daily = await g.turn('你好')
+  assert.match(bodyOf(catalogOf(daily.added)), /grilling/, '日常档没有 grilling')
+  await g.run('work')
+  const work = await g.turn('在吗')
+  assert.match(bodyOf(catalogOf(work.added)), /grilling/, '工作档没有 grilling')
+  await g.cleanup()
+})
+
+await test('classify 不覆盖 manual 里钉死的归属', async () => {
+  const g = await boot()
+  await writeFile(join(g.dir, 'classifier.json'), JSON.stringify({ endpoint: 'http://x' }), 'utf8')
+  await writeFile(join(g.dir, 'tiers.json'), JSON.stringify({
+    work: [], deliver: [], daily: [],
+    manual: { grilling: ['daily'] },
+  }), 'utf8')
+  const items = [{ name: 'grilling', tier: 'work', reason: 'x', uncertain: false }]
+  const realFetch = globalThis.fetch
+  globalThis.fetch = async () => ({ ok: true, json: async () => ({ choices: [{ message: { content: JSON.stringify({ items }) } }] }) })
+  try {
+    await g.run('classify')
+    const written = JSON.parse(await readFile(join(g.dir, 'tiers.json'), 'utf8'))
+    assert.equal(written.daily.includes('grilling'), true, 'manual 钉的日常被分类覆盖了')
+    assert.equal(written.work.includes('grilling'), false)
+    assert.deepEqual(written.manual, { grilling: ['daily'] })
+  } finally {
+    globalThis.fetch = realFetch
+  }
+  await g.cleanup()
+})
+
 console.log('')
 
 if (fail) {

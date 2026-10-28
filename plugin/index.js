@@ -84,6 +84,16 @@ export function apply(ctx, config = {}) {
     return tiers
   }
 
+  // 一个技能可以同时属于多个档（比如既能闲聊也能干活的那种），所以这里问的是
+  // 「在不在这一档」，不是「它属于哪一档」。没被任何档收进去的技能落日常。
+  function inTier(name, tier) {
+    if (typeof name !== 'string') return tier === 'daily'
+    if (!tiers) return bucket(name) === tier
+    if (tiers[tier].has(name)) return true
+    if (tier !== 'daily') return false
+    return !tiers.work.has(name) && !tiers.deliver.has(name)
+  }
+
   function bucket(name) {
     if (typeof name !== 'string') return 'daily'
     if (tiers) {
@@ -217,7 +227,7 @@ export function apply(ctx, config = {}) {
     })
     if (!snapshot || snapshot.complete !== true) return null
     await refreshTiers(Date.now())
-    const kept = snapshot.skills.filter((skill) => bucket(skill && skill.name) === tier)
+    const kept = snapshot.skills.filter((skill) => inTier(skill && skill.name, tier))
     // 分档文件在、但某个技能没被划进任何桶：它会被塞进日常。这在别人机器上很常见，
     // 所以要留痕，别让它悄悄消失。
     if (tiers && tier === 'daily') {
@@ -660,13 +670,31 @@ export function apply(ctx, config = {}) {
             const missing = entries.length - items.length
 
             if (!dry) {
+              // 模型一次只给一个主档；`manual` 是人工钉死的归属，重跑分类不许覆盖它。
+              let previous = null
+              try {
+                previous = JSON.parse(await readFile(tiersPath, 'utf8'))
+              } catch {
+                previous = null
+              }
+              const manual = previous && previous.manual && typeof previous.manual === 'object' ? previous.manual : {}
+              const lists = { work: new Set(), deliver: new Set(), daily: new Set() }
+              for (const item of items) if (lists[item.tier]) lists[item.tier].add(item.name)
+              for (const [name, wanted] of Object.entries(manual)) {
+                const tierList = Array.isArray(wanted) ? wanted : [wanted]
+                for (const key of ['work', 'deliver', 'daily']) {
+                  if (tierList.includes(key)) lists[key].add(name)
+                  else lists[key].delete(name)
+                }
+              }
               const next = {
                 schema: 1,
                 generatedAt: new Date().toISOString().slice(0, 10),
                 source: `model:${config.model || 'default'} @ ${config.endpoint}`,
-                work: items.filter((item) => item.tier === 'work').map((item) => item.name),
-                deliver: items.filter((item) => item.tier === 'deliver').map((item) => item.name),
-                daily: items.filter((item) => item.tier === 'daily').map((item) => item.name),
+                work: [...lists.work],
+                deliver: [...lists.deliver],
+                daily: [...lists.daily],
+                ...(Object.keys(manual).length ? { manual } : {}),
                 items,
               }
               await writeFile(tiersPath, JSON.stringify(next, null, 1), 'utf8')
