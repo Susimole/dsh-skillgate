@@ -519,6 +519,84 @@ export function apply(ctx, config = {}) {
     // 注册失败就什么都不做，绝不拦截对话
   }
 
+  // ---- 安装时分类（§2.4） ----
+  // 分档不再靠我手写的那两张表，而是把每个技能的摘要交给一个模型归类，结果落 tiers.json。
+  // 端点单独放在 classifier.json：换台机器、换个模型都不用改代码。
+  const classifierPath = join(dirname(statePath), 'classifier.json')
+
+  async function loadClassifier() {
+    const parsed = JSON.parse(await readFile(classifierPath, 'utf8'))
+    if (!parsed || typeof parsed.endpoint !== 'string' || !parsed.endpoint) {
+      throw new Error('classifier.json 里没有 endpoint')
+    }
+    return {
+      endpoint: parsed.endpoint,
+      model: typeof parsed.model === 'string' ? parsed.model : '',
+      apiKey: typeof parsed.apiKey === 'string' ? parsed.apiKey : '',
+      temperature: Number.isFinite(parsed.temperature) ? parsed.temperature : 0,
+    }
+  }
+
+  const CLASSIFY_PROMPT = [
+    '你是技能分类器。输入是一台机器上的技能清单（name / description / whenToUse）。',
+    '把每个技能归入且只归入一档：',
+    '- daily：闲聊、陪伴、角色扮演、人设、语气、生活琐事，不产出工作成果。',
+    '- work：诊断、调试、修 bug、写代码、读仓库、研究、审查、规划、分析。',
+    '- deliver：产出具体成品文件——表格、文档、幻灯片、图、PDF、渲染、导出。',
+    '- drop：明说依赖不存在 / 加载不了 / 内容为空，或根本读不懂在干什么。',
+    '规则：每条给一句理由（不超过 20 字）；拿不准的把 uncertain 设 true；',
+    '角色扮演、陪伴、人设类算 daily。只输出一个 JSON 对象，不要解释、不要代码块：',
+    '{"items":[{"name":"","tier":"daily|work|deliver|drop","reason":"","uncertain":false}]}',
+  ].join('\n')
+
+  function parseClassification(text, entries) {
+    const start = text.indexOf('{')
+    const end = text.lastIndexOf('}')
+    if (start < 0 || end <= start) throw new Error('模型没吐出 JSON')
+    const data = JSON.parse(text.slice(start, end + 1))
+    const raw = Array.isArray(data.items) ? data.items : []
+    const byName = new Map(raw.map((item) => [item && item.name, item]))
+    const tiers = new Set(['daily', 'work', 'deliver', 'drop'])
+    const out = []
+    entries.forEach((entry, index) => {
+      // 先按名字对，对不上再按位置兜底——小模型经常改名字。
+      const item = byName.get(entry.name) || raw[index]
+      if (!item || !tiers.has(item.tier)) return
+      out.push({
+        name: entry.name,
+        tier: item.tier,
+        reason: String(item.reason || '').slice(0, 80),
+        uncertain: Boolean(item.uncertain),
+      })
+    })
+    return out
+  }
+
+  async function classifyWithModel(entries, config) {
+    const headers = { 'Content-Type': 'application/json' }
+    if (config.apiKey) headers.Authorization = `Bearer ${config.apiKey}`
+    const response = await fetch(config.endpoint, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        ...(config.model ? { model: config.model } : {}),
+        messages: [
+          { role: 'system', content: CLASSIFY_PROMPT },
+          { role: 'user', content: JSON.stringify({ skills: entries }) },
+        ],
+        temperature: config.temperature,
+        max_tokens: 3000,
+      }),
+      signal: AbortSignal.timeout(180_000),
+    })
+    if (!response.ok) throw new Error(`分类接口回了 ${response.status}`)
+    const payload = await response.json()
+    const text = payload && payload.choices && payload.choices[0] && payload.choices[0].message
+      ? String(payload.choices[0].message.content || '')
+      : ''
+    return parseClassification(text, entries)
+  }
+
   const tierDefinition = {
         name: 'tier',
         description: '切换技能档位（daily / work / deliver / off / on / status）',
@@ -528,14 +606,83 @@ export function apply(ctx, config = {}) {
           const state = await loadState()
           const sessionId = String((invocation.agent && invocation.agent.id) || '')
           if (!arg || arg === 'status') {
+            // 直接读一次，别依赖 buildCatalog 留下的缓存——命令可能比第一轮注入先跑。
+            tiersAt = 0
+            await refreshTiers(Date.now())
             const current = (state.sessions && state.sessions[sessionId]) || state.default
             const source = tiers
-              ? `分档来源 tiers.json（工作 ${tiers.work.size} / 交付 ${tiers.deliver.size} / 日常 ${tiers.daily.size}）`
-              : '分档来源：内置表（没找到 tiers.json）'
+              ? `tiers.json（工作 ${tiers.work.size} / 交付 ${tiers.deliver.size} / 日常 ${tiers.daily.size}）`
+              : '内置表（没有 tiers.json，或文件读不出来）'
+            // 命令回显会把换行压成空格，所以这里单行写完。
             return {
               kind: 'success',
-              text: `档位：${TIER_LABEL[current] || current}${state.enabled ? '' : '（已关闭，不生效）'}\n${source}`,
+              text: `档位：${TIER_LABEL[current] || current}${state.enabled ? '' : '（已关闭，不生效）'} · 分档来源：${source}`,
             }
+          }
+          if (arg === 'classify' || arg === 'classify dry' || arg === 'classify --dry') {
+            const dry = arg !== 'classify'
+            const skillsService = ctx.get('skills')
+            if (!skillsService) return { kind: 'error', text: '拿不到 skills 服务，分类不了' }
+            let config
+            try {
+              config = await loadClassifier()
+            } catch (error) {
+              return {
+                kind: 'error',
+                text: `没配分类端点：${String(error.message || error)}。写 ${classifierPath}，形如 {"endpoint":"http://127.0.0.1:8087/v1/chat/completions","model":"qwen3.8-27b"}`,
+              }
+            }
+            const snapshot = await skillsService.snapshot({ scope: invocation.agent })
+            if (!snapshot || snapshot.complete !== true) {
+              return { kind: 'error', text: '技能快照不完整，等一会再试' }
+            }
+            const entries = snapshot.skills
+              .filter((item) => item && typeof item.name === 'string')
+              .map((item) => ({
+                name: item.name,
+                description: String(item.description || '').slice(0, 180),
+                whenToUse: String(item.whenToUse || '').slice(0, 120),
+              }))
+            let items
+            try {
+              items = await classifyWithModel(entries, config)
+            } catch (error) {
+              return { kind: 'error', text: `分类失败：${String(error.message || error)}` }
+            }
+            if (!items.length) return { kind: 'error', text: '模型一条都没分出来，没写文件' }
+
+            const before = new Map(entries.map((entry) => [entry.name, bucket(entry.name)]))
+            const changed = items
+              .filter((item) => before.get(item.name) && before.get(item.name) !== item.tier)
+              .map((item) => `${item.name}:${before.get(item.name)}→${item.tier}`)
+            const count = (tier) => items.filter((item) => item.tier === tier).length
+            const uncertain = items.filter((item) => item.uncertain).length
+            const missing = entries.length - items.length
+
+            if (!dry) {
+              const next = {
+                schema: 1,
+                generatedAt: new Date().toISOString().slice(0, 10),
+                source: `model:${config.model || 'default'} @ ${config.endpoint}`,
+                work: items.filter((item) => item.tier === 'work').map((item) => item.name),
+                deliver: items.filter((item) => item.tier === 'deliver').map((item) => item.name),
+                daily: items.filter((item) => item.tier === 'daily').map((item) => item.name),
+                items,
+              }
+              await writeFile(tiersPath, JSON.stringify(next, null, 1), 'utf8')
+              tiersAt = 0
+              await refreshTiers(Date.now())
+              snapshots.clear()
+              lastTier.delete(sessionId) // 下一轮重发清单，用新的分档
+              void appendLog({ event: 'classify', counts: { work: count('work'), deliver: count('deliver'), daily: count('daily'), drop: count('drop') }, changed: changed.length })
+            }
+            const head = `分类${dry ? '（干跑，没写文件）' : '完成'}：工作 ${count('work')} · 交付 ${count('deliver')} · 日常 ${count('daily')} · 丢弃 ${count('drop')}`
+            const tail = [
+              uncertain ? `${uncertain} 条拿不准` : '',
+              missing > 0 ? `${missing} 条没分出来` : '',
+              changed.length ? `变了 ${changed.length} 条：${changed.slice(0, 6).join('、')}` : '跟现在一样',
+            ].filter(Boolean).join(' · ')
+            return { kind: 'success', text: `${head}（${tail}）` }
           }
           if (arg === 'off' || arg === 'on') {
             state.enabled = arg === 'on'

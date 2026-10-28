@@ -401,6 +401,72 @@ await test('没被分类的技能进日常时会留痕', async () => {
   await g.cleanup()
 })
 
+console.log('第四轮：安装时分类')
+
+await test('classify：模型返回带代码块的 JSON 也能解析并写文件', async () => {
+  const g = await boot()
+  await writeFile(join(g.dir, 'classifier.json'), JSON.stringify({ endpoint: 'http://x/v1/chat/completions', model: 'm' }), 'utf8')
+  const items = SKILLS.map((item) => ({
+    name: item.name,
+    tier: item.name === 'office' ? 'deliver' : item.name === 'research' ? 'work' : 'daily',
+    reason: '测试',
+    uncertain: false,
+  }))
+  const reply = '```json\n' + JSON.stringify({ items }) + '\n```'
+  const realFetch = globalThis.fetch
+  globalThis.fetch = async () => ({ ok: true, json: async () => ({ choices: [{ message: { content: reply } }] }) })
+  try {
+    const out = await g.run('classify')
+    assert.equal(out.kind, 'success')
+    const written = JSON.parse(await readFile(join(g.dir, 'tiers.json'), 'utf8'))
+    assert.equal(written.work.length, 1)
+    assert.equal(written.deliver.length, 1)
+    assert.equal(written.daily.length, SKILLS.length - 2)
+  } finally {
+    globalThis.fetch = realFetch
+  }
+  await g.cleanup()
+})
+
+await test('classify dry：不写文件', async () => {
+  const g = await boot()
+  await writeFile(join(g.dir, 'classifier.json'), JSON.stringify({ endpoint: 'http://x' }), 'utf8')
+  const items = [{ name: 'grilling', tier: 'work', reason: 'x', uncertain: false }]
+  const realFetch = globalThis.fetch
+  globalThis.fetch = async () => ({ ok: true, json: async () => ({ choices: [{ message: { content: JSON.stringify({ items }) } }] }) })
+  try {
+    const out = await g.run('classify dry')
+    assert.equal(out.kind, 'success')
+    await assert.rejects(() => readFile(join(g.dir, 'tiers.json'), 'utf8'))
+  } finally {
+    globalThis.fetch = realFetch
+  }
+  await g.cleanup()
+})
+
+await test('classify：接口报错时不写文件、回错误', async () => {
+  const g = await boot()
+  await writeFile(join(g.dir, 'classifier.json'), JSON.stringify({ endpoint: 'http://x' }), 'utf8')
+  const realFetch = globalThis.fetch
+  globalThis.fetch = async () => ({ ok: false, status: 500 })
+  try {
+    const out = await g.run('classify')
+    assert.equal(out.kind, 'error')
+    await assert.rejects(() => readFile(join(g.dir, 'tiers.json'), 'utf8'))
+  } finally {
+    globalThis.fetch = realFetch
+  }
+  await g.cleanup()
+})
+
+await test('classify：没配端点时明确报错', async () => {
+  const g = await boot()
+  const out = await g.run('classify')
+  assert.equal(out.kind, 'error')
+  assert.match(out.text, /classifier\.json/)
+  await g.cleanup()
+})
+
 console.log('')
 
 if (fail) {
