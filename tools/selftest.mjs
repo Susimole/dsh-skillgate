@@ -681,6 +681,50 @@ await test('命令还在：不重复注册', async () => {
   await g.cleanup()
 })
 
+console.log('第十一轮：v0.4 冻结与回退')
+
+await test('冻结：刚升到工作档，3 轮内的第二次升档不生效', async () => {
+  const g = await boot()
+  await g.turn('帮我看一下这个报错')
+  const blocked = await g.turn('帮我把这个做成表')
+  assert.equal(catalogOf(blocked.added), undefined, '冻结期内不该再升档')
+  assert.equal((await g.read()).sessions.s1, 'work')
+  await g.cleanup()
+})
+
+await test('冻结不影响降档：升完档马上说晚安，照样回日常', async () => {
+  const g = await boot()
+  await g.turn('帮我看一下这个报错')
+  const out = await g.turn('晚安')
+  assert.equal(catalogOf(out.added).source.tier, 'daily')
+  await g.cleanup()
+})
+
+await test('回退：升档后两轮一次工具都没调，退回原档', async () => {
+  const g = await boot()
+  await g.turn('帮我看一下这个报错')
+  await g.turn('嗯')
+  const third = await g.turn('嗯')
+  assert.equal(catalogOf(third.added).source.tier, 'daily', '没有回退')
+  assert.equal((await g.read()).sessions.s1, 'daily')
+  await g.cleanup()
+})
+
+await test('回退不误伤：这两轮里调过工具就留着', async () => {
+  const g = await boot()
+  await g.turn('帮我看一下这个报错')
+  await g.turn('嗯')
+  const third = await g.step(1, '嗯', {
+    history: [
+      { role: 'assistant', id: 't0', content: [{ type: 'text', text: '…' }] },
+      { role: 'assistant', id: 't1', content: [{ type: 'tool_use', name: 'now' }] },
+    ],
+  })
+  assert.equal(catalogOf(third.added), undefined, '调过工具还被回退了')
+  assert.equal((await g.read()).sessions.s1, 'work')
+  await g.cleanup()
+})
+
 console.log('')
 
 if (fail) {

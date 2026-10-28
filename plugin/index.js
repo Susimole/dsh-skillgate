@@ -355,6 +355,24 @@ export function apply(ctx, config = {}) {
     return ''
   }
 
+  // ---- 升档后的观察窗口（v0.4） ----
+  const TIER_RANK = { daily: 0, work: 1, deliver: 2 }
+  const tierRank = (name) => (name in TIER_RANK ? TIER_RANK[name] : 0)
+  const turnNo = new Map()      // sessionId -> 第几轮
+  const freezeUntil = new Map() // sessionId -> 冻结到第几轮
+  const promoted = new Map()    // sessionId -> { from, at, index }
+
+  function countToolUse(messages) {
+    let count = 0
+    for (const message of messages || []) {
+      if (!message || message.role !== 'assistant' || !Array.isArray(message.content)) continue
+      for (const block of message.content) {
+        if (block && (block.type === 'tool_use' || block.type === 'tool_call')) count += 1
+      }
+    }
+    return count
+  }
+
   // ---- 时间感知（v0.2） ----
   // 受同一条运行时限制：只有轮首注入会落盘，所以时间行在轮首给，
   // 轮中要精确时刻就让模型自己调 now()。
@@ -513,6 +531,22 @@ export function apply(ctx, config = {}) {
         healTierCommand(payload.agent)
         const sessionId = String((payload && payload.agent && payload.agent.id) || '')
         let tier = (state.sessions && state.sessions[sessionId]) || state.default || 'daily'
+        const turn = (turnNo.get(sessionId) || 0) + 1
+        turnNo.set(sessionId, turn)
+
+        // 升档后两轮观察：一次工具都没调，说明这趟并不需要那些技能，退回原档。
+        const watch = promoted.get(sessionId)
+        if (watch && turn >= watch.at + 2) {
+          promoted.delete(sessionId)
+          const used = countToolUse((payload.messages || []).slice(watch.index))
+          if (!used && tierRank(tier) > tierRank(watch.from)) {
+            tier = watch.from
+            state.sessions[sessionId] = tier
+            await saveState(state)
+            freezeUntil.delete(sessionId)
+            void appendLog({ event: 'rollback', sessionId, from: watch.from, reason: 'no-tool' })
+          }
+        }
 
         // 先看这一轮用户说了什么：显式指令优先于当前档位。
         const now = Date.now()
@@ -531,6 +565,19 @@ export function apply(ctx, config = {}) {
                 const lastWorkAt = Number(meta.lastWorkAt || 0)
                 nextTier = tier === 'daily' && lastWorkAt > 0 && now - lastWorkAt < holdWindowMs ? 'work' : null
               }
+              const upgrading = nextTier && tierRank(nextTier) > tierRank(tier)
+              if (upgrading && (freezeUntil.get(sessionId) || 0) > turn) {
+                // 刚升过档，还在冻结期：这次升档不生效，但降档永远放行（升档保守、降档灵敏）。
+                void appendLog({
+                  event: 'rule-skipped',
+                  reason: 'freeze',
+                  sessionId,
+                  bucket: hit.bucket,
+                  rule: hit.rule,
+                  text: text.slice(0, 120),
+                })
+                nextTier = null
+              }
               void appendLog({
                 event: 'rule',
                 sessionId,
@@ -541,7 +588,12 @@ export function apply(ctx, config = {}) {
                 to: nextTier || tier,
               })
               if (nextTier && nextTier !== tier) {
+                const from = tier
                 tier = nextTier
+                if (tierRank(tier) > tierRank(from)) {
+                  freezeUntil.set(sessionId, turn + 3)
+                  promoted.set(sessionId, { from, at: turn, index: decision.messages.length })
+                }
                 state.sessions[sessionId] = tier
                 const nextMeta = { ...(state.meta[sessionId] || {}) }
                 if (tier === 'work' || tier === 'deliver') nextMeta.lastWorkAt = now
