@@ -725,6 +725,74 @@ await test('回退不误伤：这两轮里调过工具就留着', async () => {
   await g.cleanup()
 })
 
+console.log('第十二轮：模型自己换档')
+
+const callTool = (g, name, args = {}) => g.tools.get(name).execute(args, { agent: { id: 's1' } })
+
+await test('冷启动：第一轮注入里带着定档提示', async () => {
+  const g = await boot()
+  const { added } = await g.turn('你好')
+  assert.match(bodyOf(catalogOf(added)), /还没定过档/)
+  await g.cleanup()
+})
+
+await test('冷启动：set_tier 直接生效，之后不再提示', async () => {
+  const g = await boot()
+  await g.turn('你好')
+  const out = await callTool(g, 'set_tier', { tier: 'work', reason: '在改代码' })
+  assert.match(out.text, /起始档位/)
+  assert.equal((await g.read()).sessions.s1, 'work')
+  const next = await g.turn('嗯') // 档位没变，不重发；这里只确认 judgedAt 已落盘
+  assert.equal((await g.read()).meta.s1.judgedAt > 0, true)
+  await g.cleanup()
+})
+
+await test('升档要先问：set_tier 不直接生效', async () => {
+  const g = await boot()
+  await g.turn('你好')
+  await callTool(g, 'set_tier', { tier: 'work' }) // 冷启动定成工作档
+  await g.turn('嗯')
+  const out = await callTool(g, 'set_tier', { tier: 'deliver', reason: '要做表' })
+  assert.match(out.text, /先问用户/)
+  assert.equal((await g.read()).sessions.s1, 'work', '升档不该直接生效')
+  await g.cleanup()
+})
+
+await test('confirm_tier 之后才真的升', async () => {
+  const g = await boot()
+  await g.turn('你好')
+  await callTool(g, 'set_tier', { tier: 'daily' })
+  await g.turn('嗯')
+  await callTool(g, 'set_tier', { tier: 'deliver' })
+  const out = await callTool(g, 'confirm_tier')
+  assert.match(out.text, /已升到/)
+  assert.equal((await g.read()).sessions.s1, 'deliver')
+  await g.cleanup()
+})
+
+await test('升档待确认超过 3 轮就作废', async () => {
+  const g = await boot()
+  await g.turn('你好')
+  await callTool(g, 'set_tier', { tier: 'work' })
+  await g.turn('嗯')
+  await callTool(g, 'set_tier', { tier: 'deliver' })
+  for (let i = 0; i < 4; i += 1) await g.turn('嗯')
+  const out = await callTool(g, 'confirm_tier')
+  assert.match(out.text, /过期/)
+  assert.equal((await g.read()).sessions.s1, 'work')
+  await g.cleanup()
+})
+
+await test('降档不用问：模型自己就能退', async () => {
+  const g = await boot()
+  await g.turn('你好')
+  await callTool(g, 'set_tier', { tier: 'work' })
+  const out = await callTool(g, 'set_tier', { tier: 'daily' })
+  assert.match(out.text, /降档不用问/)
+  assert.equal((await g.read()).sessions.s1, 'daily')
+  await g.cleanup()
+})
+
 console.log('')
 
 if (fail) {

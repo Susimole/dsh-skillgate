@@ -165,7 +165,7 @@ export function apply(ctx, config = {}) {
     }
   }
 
-  function renderCatalog(tier, skills) {
+  function renderCatalog(tier, skills, hint) {
     const lines = skills.map((skill) => `- \`${skill.name}\`: ${skill.description}`)
     const body = lines.length ? lines.join('\n') : '（本档没有任何技能）'
     return [
@@ -177,6 +177,7 @@ export function apply(ctx, config = {}) {
       END,
       '',
       '如果任务需要其他档位的技能，告诉用户要切换档位，不要凭空使用清单外的名字。',
+      ...(hint ? ['', hint] : []),
       '</system-reminder>',
     ].join('\n')
   }
@@ -191,8 +192,8 @@ export function apply(ctx, config = {}) {
 
   // 与上游 createUserMessage 同形：克隆后深冻结、自带 id、用自己的 source.kind。
   // 借用别人的 kind 会被会话层当成既有事件类型处理，这是最初没落盘的原因之一。
-  function createTierMessage(tier, entries) {
-    const text = renderCatalog(tier, entries)
+  function createTierMessage(tier, entries, hint) {
+    const text = renderCatalog(tier, entries, hint)
     return deepFreeze(structuredClone({
       role: 'user',
       id: randomUUID(),
@@ -207,12 +208,12 @@ export function apply(ctx, config = {}) {
     }))
   }
 
-  async function buildCatalog(payload, tier) {
+  async function buildCatalog(payload, tier, hint) {
     const skillsService = ctx.get('skills')
     if (!skillsService) return null
     const key = `${payload.agent.id}|${tier}`
     const hit = snapshots.get(key)
-    if (hit && Date.now() - hit.at < 60_000) return createTierMessage(tier, hit.entries)
+    if (hit && Date.now() - hit.at < 60_000) return createTierMessage(tier, hit.entries, hint)
     const workingDirectory = ctx.get('workingDirectory')
     let cwd
     try {
@@ -237,7 +238,7 @@ export function apply(ctx, config = {}) {
       if (unknown.length) void appendLog({ event: 'unclassified', names: unknown })
     }
     snapshots.set(key, { at: Date.now(), entries: kept })
-    return createTierMessage(tier, kept)
+    return createTierMessage(tier, kept, hint)
   }
 
   // ---- 显式指令识别（v0.3 第一刀：纯字面匹配，不做归纳） ----
@@ -450,6 +451,26 @@ export function apply(ctx, config = {}) {
     }))
   }
 
+  // ---- 模型换档（v0.5） ----
+  // 降档是保守方向，模型自己就能做；升档必须先问用户，用户点头后再 confirm。
+  // 每个会话的第一次 set_tier 是「定起始档」，不算升档。
+  const pendingUpgrade = new Map() // sessionId -> { tier, turn, reason }
+
+  async function applyModelTier(sessionId, target, reason) {
+    const state = await loadState()
+    const from = (state.sessions && state.sessions[sessionId]) || state.default || 'daily'
+    if (from === target) return { from, changed: false }
+    state.sessions[sessionId] = target
+    const nextMeta = { ...(state.meta[sessionId] || {}) }
+    if (target === 'work' || target === 'deliver') nextMeta.lastWorkAt = Date.now()
+    state.meta[sessionId] = nextMeta
+    await saveState(state)
+    lastTier.delete(sessionId)
+    snapshots.clear()
+    void appendLog({ event: 'model-tier', sessionId, from, to: target, reason: String(reason || '').slice(0, 80) })
+    return { from, changed: true }
+  }
+
   function makeTool(name, description, parameters, run) {
     return {
       name,
@@ -498,6 +519,56 @@ export function apply(ctx, config = {}) {
           state.deadlines[sessionId] = { at, note: typeof args.note === 'string' ? args.note : '', remindedAt: null }
           await saveState(state)
           return `已设截止 ${formatClock(at)}（${formatDuration(minutes * 60000)} 后）${args.note ? '：' + args.note : ''}。到点我会在下一轮开头提醒收尾。`
+        },
+      ))
+      tools.register(makeTool(
+        'set_tier',
+        '给你自己换档。降档（交付→工作→日常）可以直接用；升档前必须先问用户一句，用户同意后再调 confirm_tier。每个会话第一次调用是定起始档，直接生效。',
+        {
+          type: 'object',
+          properties: {
+            tier: { type: 'string', description: 'daily / work / deliver' },
+            reason: { type: 'string', description: '一句话理由，会写进日志' },
+          },
+          required: ['tier'],
+        },
+        async (args, exec) => {
+          const sessionId = String((exec && exec.agent && exec.agent.id) || '')
+          const target = String((args && args.tier) || '').toLowerCase()
+          if (!(target in TIER_RANK)) return '档位只能是 daily / work / deliver。'
+          const state = await loadState()
+          const current = (state.sessions && state.sessions[sessionId]) || state.default || 'daily'
+          const meta = (state.meta && state.meta[sessionId]) || {}
+
+          if (!meta.judgedAt) {
+            // 冷启动：这一档就是起始档，直接生效，并记住「已经判过一次」。
+            await applyModelTier(sessionId, target, args.reason)
+            const next = await loadState()
+            next.meta[sessionId] = { ...(next.meta[sessionId] || {}), judgedAt: Date.now() }
+            await saveState(next)
+            return `起始档位定为 ${TIER_LABEL[target]}，之后不会再自动重判。`
+          }
+          if (tierRank(target) <= tierRank(current)) {
+            await applyModelTier(sessionId, target, args.reason)
+            return `已切到 ${TIER_LABEL[target]}（降档不用问）。`
+          }
+          pendingUpgrade.set(sessionId, { tier: target, turn: turnNo.get(sessionId) || 0, reason: args.reason })
+          return `升档要先问用户：用你自己的话问一句「要不要切到 ${TIER_LABEL[target]}」；用户同意后调 confirm_tier。`
+        },
+      ))
+      tools.register(makeTool(
+        'confirm_tier',
+        '用户同意升档后调用。把 set_tier 记下的那次升档真正生效；超过 3 轮就作废。',
+        { type: 'object', properties: {}, additionalProperties: false },
+        async (_args, exec) => {
+          const sessionId = String((exec && exec.agent && exec.agent.id) || '')
+          const pending = pendingUpgrade.get(sessionId)
+          if (!pending) return '没有待确认的升档。'
+          const turn = turnNo.get(sessionId) || 0
+          pendingUpgrade.delete(sessionId)
+          if (turn - pending.turn > 3) return '那次升档已经过期了（超过 3 轮），要升就重新走一遍。'
+          await applyModelTier(sessionId, pending.tier, pending.reason)
+          return `已升到 ${TIER_LABEL[pending.tier]}。`
         },
       ))
       tools.register(makeTool(
@@ -608,7 +679,11 @@ export function apply(ctx, config = {}) {
         // 但时间行是独立判断的，不能因为档位没变就一起跳过。
         const out = [...decision.messages]
         if (lastTier.get(sessionId) !== tier) {
-          const message = await buildCatalog(payload, tier)
+          const metaNow = (state.meta && state.meta[sessionId]) || {}
+          const hint = metaNow.judgedAt
+            ? ''
+            : '本会话还没定过档。读完用户这句话后，用 set_tier 选一个起始档（只做一次）；拿不准就留在日常。'
+          const message = await buildCatalog(payload, tier, hint)
           if (message) {
             lastTier.set(sessionId, tier)
             out.push(message)
