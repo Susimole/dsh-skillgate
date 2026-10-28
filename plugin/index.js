@@ -483,10 +483,7 @@ export function apply(ctx, config = {}) {
     // 注册失败就什么都不做，绝不拦截对话
   }
 
-  try {
-    const commands = ctx.get('commands')
-    if (commands) {
-      commands.register({
+  const tierDefinition = {
         name: 'tier',
         description: '切换技能档位（daily / work / deliver / off / on / status）',
         input: { hint: 'daily | work | deliver | off | on | status' },
@@ -528,9 +525,44 @@ export function apply(ctx, config = {}) {
             text: `已切到 ${TIER_LABEL[tier]} 档，下一轮生效（${Math.round(manualHoldMs / 60000)} 分钟内规则不覆盖）`,
           }
         },
+  }
+
+  // 命令是唯一的手动兜底，所以注册失败必须留痕：
+  // DSH 重载插件时 commands 服务不一定已经就绪，静默失败会让 /tier 变成普通聊天，
+  // 而它一坏，用户就没有任何别的办法把档位切回来了。
+  function registerTierCommand(commands) {
+    try {
+      commands.register(tierDefinition)
+      void appendLog({ event: 'command', action: 'register', status: 'ok' })
+      return true
+    } catch (error) {
+      void appendLog({
+        event: 'command',
+        action: 'register',
+        status: 'failed',
+        error: String((error && error.message) || error),
+      })
+      return false
+    }
+  }
+
+  const commandsNow = ctx.get('commands')
+  if (commandsNow) {
+    registerTierCommand(commandsNow)
+  } else {
+    void appendLog({ event: 'command', action: 'register', status: 'not-ready' })
+    try {
+      ctx.inject?.(['commands'], (scope) => {
+        const late = scope && typeof scope.get === 'function' ? scope.get('commands') : null
+        if (late) registerTierCommand(late)
+      })
+    } catch (error) {
+      void appendLog({
+        event: 'command',
+        action: 'inject',
+        status: 'failed',
+        error: String((error && error.message) || error),
       })
     }
-  } catch {
-    // 命令注册失败不影响改写
   }
 }
