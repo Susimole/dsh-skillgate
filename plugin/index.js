@@ -241,22 +241,14 @@ export function apply(ctx, config = {}) {
   }
 
   // ---- 显式指令识别（v0.3 第一刀：纯字面匹配，不做归纳） ----
-  // 种子来自使用者自己的原话；换一个人装，这里应当是空的（定稿 §11 纪律）。
-  const DEFAULT_LEXICON = {
-    enterWork: [
-      '帮我看', '帮我查', '帮我找', '帮我在', '帮我改', '帮我做',
-      '是不是坏了', '用不了', '报错', '继续做', '继续改', '是我做的',
-    ],
-    exit: ['好了结束', '搞定', '收工', '先这样', '晚安', '只聊天', '别管这个', '先不弄了'],
-    veto: ['先别动手', '仅讨论', '只讨论', '几个技能', '先别改'],
-    enterDeliver: ['做成表', '出个图', '出张图', '生成表格', '做个表', '导出', '交接文件', '生成报告', '做个图', '出个表'],
-    hold: ['继续', '接着干', '接着做', '继续吧'],
-  }
+  // 词表**不内置**（定稿 §11 纪律）：没有 lexicon.json 就是空词表，什么都不自动切。
+  // 原来这里写死的是我自己那 39 条原话，换个人装上去等于把口音也一起装过去。
+  const EMPTY_LEXICON = { enterWork: [], enterDeliver: [], exit: [], veto: [], hold: [] }
 
   async function loadLexicon() {
     try {
       const parsed = JSON.parse(await readFile(lexiconPath, 'utf8'))
-      const pick = (key) => (Array.isArray(parsed[key]) ? parsed[key] : DEFAULT_LEXICON[key])
+      const pick = (key) => (Array.isArray(parsed[key]) ? parsed[key].filter((rule) => typeof rule === 'string' && rule) : [])
       return {
         enterWork: pick('enterWork'),
         enterDeliver: pick('enterDeliver'),
@@ -265,7 +257,7 @@ export function apply(ctx, config = {}) {
         hold: pick('hold'),
       }
     } catch {
-      return DEFAULT_LEXICON
+      return EMPTY_LEXICON
     }
   }
 
@@ -623,10 +615,12 @@ export function apply(ctx, config = {}) {
             const source = tiers
               ? `tiers.json（工作 ${tiers.work.size} / 交付 ${tiers.deliver.size} / 日常 ${tiers.daily.size}）`
               : '内置表（没有 tiers.json，或文件读不出来）'
+            const lexicon = await loadLexicon()
+            const rules = Object.values(lexicon).reduce((sum, list) => sum + list.length, 0)
             // 命令回显会把换行压成空格，所以这里单行写完。
             return {
               kind: 'success',
-              text: `档位：${TIER_LABEL[current] || current}${state.enabled ? '' : '（已关闭，不生效）'} · 分档来源：${source}`,
+              text: `档位：${TIER_LABEL[current] || current}${state.enabled ? '' : '（已关闭，不生效）'} · 分档来源：${source} · 词表 ${rules} 条${rules ? '' : '（还没校准，不会自动切档）'}`,
             }
           }
           if (arg === 'classify' || arg === 'classify dry' || arg === 'classify --dry') {

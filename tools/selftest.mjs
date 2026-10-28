@@ -43,6 +43,15 @@ const SKILLS = [
   'office-export-pdf', 'office-recalculate', 'archify', 'writing-for-agents',
 ].map(skill)
 
+// 插件不再内置词表，用例自己带一份（跟使用机上 ~/.dsh/mode/lexicon.json 同形）。
+const LEXICON = {
+  enterWork: ['帮我看', '帮我查', '报错', '继续做'],
+  exit: ['好了结束', '搞定', '晚安', '收工'],
+  veto: ['先别动手', '仅讨论', '几个技能'],
+  enterDeliver: ['做成表', '出个图', '交接文件', '导出'],
+  hold: ['继续', '接着干'],
+}
+
 function userMsg(text, kind = 'user') {
   return { role: 'user', id: `u-${Math.random()}`, content: [{ type: 'text', text }], source: { kind } }
 }
@@ -69,6 +78,7 @@ async function boot(options = {}) {
       return () => {}
     },
   }
+  if (!options.noLexicon) await writeFile(join(dir, 'lexicon.json'), JSON.stringify(LEXICON), 'utf8')
   apply(ctx, { statePath, ...(options.config || {}) })
   const preStep = handlers.get('agent/pre-step')[0]
 
@@ -503,6 +513,23 @@ await test('classify 不覆盖 manual 里钉死的归属', async () => {
   } finally {
     globalThis.fetch = realFetch
   }
+  await g.cleanup()
+})
+
+console.log('第六轮：词表不内置')
+
+await test('没有 lexicon.json：空词表，任何规则都不触发', async () => {
+  const g = await boot({ noLexicon: true })
+  const { added } = await g.turn('帮我看一下这个报错')
+  const catalog = catalogOf(added)
+  assert.equal(catalog.source.tier, 'daily', '没有词表还自动切档了')
+  await g.cleanup()
+})
+
+await test('lexicon.json 存在：规则照常', async () => {
+  const g = await boot()
+  const { added } = await g.turn('帮我看一下这个报错')
+  assert.equal(catalogOf(added).source.tier, 'work')
   await g.cleanup()
 })
 
