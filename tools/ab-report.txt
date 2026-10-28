@@ -1,0 +1,11 @@
+有效 60 条，失败 0 条
+
+条件          chars  heading   bullet numbered    table     bold    paras    shape
+none         1283        5       13        0        0       20        9       18
+daily        1444        6       11        3        0       20        9       20
+work         1195        5        8        0        0       19        8       16
+deliver      1136        5       12        0        0       17        9       20
+
+（每格是中位数）
+
+配对（同题 daily−work 形态分）：work 更高 6 题，daily 更高 8 题，持平 1 题

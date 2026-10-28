@@ -1,0 +1,13 @@
+chars    daily    mean   +4.4 median  +47.0 pos10 neg5
+chars    work     mean -117.9 median  -17.0 pos7 neg8
+chars    deliver  mean   +8.7 median   -2.0 pos7 neg8
+shape    daily    mean   +0.5 median   +1.0 pos8 neg7
+shape    work     mean   -2.3 median   +0.0 pos7 neg7
+shape    deliver  mean   +0.3 median   -2.0 pos7 neg8
+heading  daily    mean   +0.1 median   +0.0 pos5 neg5
+heading  work     mean   -0.6 median   +0.0 pos6 neg5
+heading  deliver  mean   +0.0 median   -1.0 pos6 neg8
+bullet   daily    mean   +0.1 median   -3.0 pos5 neg10
+bullet   work     mean   -0.7 median   +1.0 pos8 neg6
+bullet   deliver  mean   +0.9 median   +1.0 pos8 neg7
+mention tier: 0/60
