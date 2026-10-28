@@ -510,6 +510,7 @@ export function apply(ctx, config = {}) {
         const step = Number(payload && payload.step) || 0
         // 只有轮首那份会被持久化，轮中注入既费 token 又不生效。
         if (step !== 1) return decision
+        healTierCommand(payload.agent)
         const sessionId = String((payload && payload.agent && payload.agent.id) || '')
         let tier = (state.sessions && state.sessions[sessionId]) || state.default || 'daily'
 
@@ -865,11 +866,29 @@ export function apply(ctx, config = {}) {
     }
   }
 
+  // 命令是唯一的手动退路：重装插件后它静默消失过一次（14:11 实测）。
+  // 所以每轮顺手看一眼，不在就补注册。60 秒最多试一次，免得 find 不可靠时重复注册。
+  let commandHealAt = 0
+  function healTierCommand(agent) {
+    const now = Date.now()
+    if (now - commandHealAt < 60_000) return
+    const commands = ctx.get('commands')
+    if (!commands || typeof commands.find !== 'function') return
+    commandHealAt = now
+    try {
+      if (commands.find(agent, 'tier')) return
+    } catch {
+      return
+    }
+    if (registerTierCommand(commands)) {
+      void appendLog({ event: 'command', action: 'heal', status: 'reregistered' })
+    }
+  }
+
   const commandsNow = ctx.get('commands')
   if (commandsNow) {
     registerTierCommand(commandsNow)
-  } else {
-    void appendLog({ event: 'command', action: 'register', status: 'not-ready' })
+  } else {    void appendLog({ event: 'command', action: 'register', status: 'not-ready' })
     try {
       ctx.inject?.(['commands'], (scope) => {
         const late = scope && typeof scope.get === 'function' ? scope.get('commands') : null

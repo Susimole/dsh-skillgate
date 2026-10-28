@@ -69,7 +69,10 @@ async function boot(options = {}) {
       if (name === 'skills') return { snapshot }
       if (name === 'workingDirectory') return { ensure: async () => 'D:\\work' }
       if (name === 'tools') return { register: (def) => tools.set(def.name, def) }
-      if (name === 'commands') return { register: (def) => commands.set(def.name, def) }
+      if (name === 'commands') return {
+        register: (def) => { commands.set(def.name, def); return () => commands.delete(def.name) },
+        find: (_agent, commandName) => (commands.has(commandName) ? commands.get(commandName) : undefined),
+      }
       return undefined
     },
     on(name, fn) {
@@ -109,6 +112,7 @@ async function boot(options = {}) {
     write: (value) => writeFile(statePath, JSON.stringify(value), 'utf8'),
     run: (input) => commands.get('tier').handler({ rawInput: input, agent: { id: 's1' } }),
     tools,
+    commands,
     cleanup: () => rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }),
   }
 }
@@ -655,6 +659,25 @@ await test('同样的词进了真请求就该切：「救命，这个报错查�
   const g = await boot()
   const { added } = await g.turn('救命，这个报错查不出来')
   assert.equal(catalogOf(added).source.tier, 'work')
+  await g.cleanup()
+})
+
+console.log('第十轮：命令自愈')
+
+await test('命令被弄丢了：下一轮自己补回来', async () => {
+  const g = await boot()
+  assert.ok(g.commands.has('tier'), '一开始就没注册上')
+  g.commands.delete('tier') // 模拟重装插件后注册丢失
+  await g.turn('你好')
+  assert.ok(g.commands.has('tier'), '没有自愈')
+  await g.cleanup()
+})
+
+await test('命令还在：不重复注册', async () => {
+  const g = await boot()
+  const first = g.commands.get('tier')
+  await g.turn('你好')
+  assert.equal(g.commands.get('tier'), first, '把命令换成了新的定义')
   await g.cleanup()
 })
 
