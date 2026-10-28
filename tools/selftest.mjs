@@ -641,6 +641,23 @@ await test('删光了就是空词表，不自动切档', async () => {
   await g.cleanup()
 })
 
+console.log('第九轮：模糊句不猜')
+
+await test('「救救我」不切档：没有宾语、没有动作，规则不该猜', async () => {
+  const g = await boot()
+  await g.turn('你好')
+  const { added } = await g.turn('救救我')
+  assert.equal(catalogOf(added), undefined, '模糊感叹句被当成了干活信号')
+  await g.cleanup()
+})
+
+await test('同样的词进了真请求就该切：「救命，这个报错查不出来」', async () => {
+  const g = await boot()
+  const { added } = await g.turn('救命，这个报错查不出来')
+  assert.equal(catalogOf(added).source.tier, 'work')
+  await g.cleanup()
+})
+
 console.log('')
 
 if (fail) {

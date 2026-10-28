@@ -6,7 +6,7 @@
 // messages.json: [{ "text": "...", "at": "2026-10-28 00:44" }, ...]
 
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { tmpdir, homedir } from 'node:os'
 import { join } from 'node:path'
 
 const MODULE = new URL('../plugin/index.js', import.meta.url)
@@ -38,8 +38,10 @@ const SKILLS = [
   'office-export-pdf', 'office-recalculate', 'archify', 'writing-for-agents',
 ].map((name) => ({ name, description: `${name} 做什么` }))
 
+let boxDir = ''
 async function fresh() {
   const dir = await mkdtemp(join(tmpdir(), 'sg-rp-'))
+  boxDir = dir
   const statePath = join(dir, 'state.json')
   let handler
   const ctx = {
@@ -55,14 +57,14 @@ async function fresh() {
       return () => {}
     },
   }
-  // 插件不再内置词表，回放得自带一份（跟使用机上那份同形）。
-  await writeFile(join(dir, 'lexicon.json'), JSON.stringify({
-    enterWork: ['帮我看', '帮我查', '帮我找', '帮我在', '帮我改', '帮我做', '是不是坏了', '用不了', '报错', '继续做', '继续改', '是我做的'],
-    exit: ['好了结束', '搞定', '收工', '先这样', '晚安', '只聊天', '别管这个', '先不弄了'],
-    veto: ['先别动手', '仅讨论', '只讨论', '几个技能', '先别改'],
-    enterDeliver: ['做成表', '出个图', '出张图', '生成表格', '做个表', '导出', '交接文件', '生成报告', '做个图', '出个表'],
-    hold: ['继续', '接着干', '接着做', '继续吧'],
-  }), 'utf8')
+  // 回放直接用使用机上那份词表，别再抄一份——抄的那份会跟真实配置漂移。
+  try {
+    const live = await readFile(join(homedir(), '.dsh', 'mode', 'lexicon.json'), 'utf8')
+    JSON.parse(live)
+    await writeFile(join(dir, 'lexicon.json'), live, 'utf8')
+  } catch {
+    // 没有就用空词表跑，正好能看到「什么都不切」的基线
+  }
   apply(ctx, { statePath })
   const turn = async (text) => {
     const messagesIn = [
@@ -97,14 +99,31 @@ for (const [index, message] of messages.entries()) {
     tier = after
   }
 }
+// 命中了但没换档的也算数（比如本来就日常，命中 exit 看不出变化），所以读一遍日志。
+let ruleLog = []
+try {
+  const raw = await readFile(join(boxDir, 'skillgate.log'), 'utf8')
+  ruleLog = raw.trim().split(String.fromCharCode(10)).map((line) => JSON.parse(line)).filter((row) => row.event === 'rule' || row.event === 'rule-skipped')
+} catch {
+  ruleLog = []
+}
 await box.cleanup()
 
-console.log(`共 ${messages.length} 条人话，连续模式下切档 ${rows.length} 次\n`)
+console.log('共 ' + messages.length + ' 条人话，连续模式下切档 ' + rows.length + ' 次')
 for (const row of rows) {
-  console.log(`${String(row.index).padStart(3)} ${row.at || ''}  ${row.from} → ${row.to}   «${row.text}»`)
+  console.log(String(row.index).padStart(3) + ' ' + (row.at || '') + '  ' + row.from + ' -> ' + row.to + '   «' + row.text + '»')
 }
 
-// 独立模式：每条都是新会话的第一句，量「单句触发率」。
+const byBucket = {}
+for (const row of ruleLog) {
+  const key = row.bucket || row.reason || '?'
+  byBucket[key] = (byBucket[key] || 0) + 1
+}
+console.log(String.fromCharCode(10) + '规则命中（含没换档的）：' + (Object.entries(byBucket).map(([k, v]) => k + ' ' + v).join(' · ') || '无'))
+for (const row of ruleLog.filter((r) => r.event === 'rule').slice(-14)) {
+  console.log('   命中 ' + row.bucket + ' «' + row.rule + '» <- ' + String(row.text || '').replace(/\s+/g, ' ').slice(0, 50))
+}
+
 let hits = 0
 for (const message of messages) {
   currentAt = message.at
@@ -113,4 +132,5 @@ for (const message of messages) {
   if ((await solo.tier()) !== 'daily') hits += 1
   await solo.cleanup()
 }
-console.log(`\n独立模式（每条都当新会话第一句）：${hits}/${messages.length} 条会当场切档`)
+Date.now = realNow
+console.log(String.fromCharCode(10) + '独立模式（每条都当新会话第一句）：' + hits + '/' + messages.length + ' 条会当场切档')
