@@ -357,6 +357,50 @@ await test('未知技能默认落日常（v0.1 脚手架行为，先钉住）', 
   await g.cleanup()
 })
 
+console.log('第三轮：分类结果（tiers.json）')
+
+await test('tiers.json 存在：按它分档，内置表让位', async () => {
+  const g = await boot()
+  await writeFile(join(g.dir, 'tiers.json'), JSON.stringify({
+    work: ['grilling'],
+    deliver: ['office', 'archify'],
+    daily: ['time-estimates'],
+  }), 'utf8')
+  const { added } = await g.turn('你好')
+  const catalog = catalogOf(added)
+  assert.equal(catalog.source.tier, 'daily')
+  assert.match(bodyOf(catalog), /time-estimates/)
+  assert.equal(/grilling/.test(bodyOf(catalog)), false, 'grilling 已被划进工作档，不该出现在日常')
+  await g.cleanup()
+})
+
+await test('tiers.json 全空：当成没有，退回内置表', async () => {
+  const g = await boot()
+  await writeFile(join(g.dir, 'tiers.json'), JSON.stringify({ work: [], deliver: [], daily: [] }), 'utf8')
+  const { added } = await g.turn('你好')
+  assert.equal(countIn(bodyOf(catalogOf(added))), 2, '应退回内置表（日常 2 条）')
+  await g.cleanup()
+})
+
+await test('tiers.json 损坏：不崩，退回内置表', async () => {
+  const g = await boot()
+  await writeFile(join(g.dir, 'tiers.json'), '{{{', 'utf8')
+  const { added } = await g.turn('你好')
+  assert.equal(countIn(bodyOf(catalogOf(added))), 2)
+  await g.cleanup()
+})
+
+await test('没被分类的技能进日常时会留痕', async () => {
+  const g = await boot({ snapshot: async () => ({ complete: true, skills: [...SKILLS, skill('brand-new-skill')] }) })
+  await writeFile(join(g.dir, 'tiers.json'), JSON.stringify({ work: ['research'], deliver: ['office'], daily: ['grilling'] }), 'utf8')
+  await g.turn('你好')
+  const lines = (await readFile(join(g.dir, 'skillgate.log'), 'utf8')).trim().split(/\r?\n/).map((l) => JSON.parse(l))
+  const unclassified = lines.find((l) => l.event === 'unclassified')
+  assert.ok(unclassified, '没有记录未分类技能')
+  assert.ok(unclassified.names.includes('brand-new-skill'))
+  await g.cleanup()
+})
+
 console.log('')
 
 if (fail) {

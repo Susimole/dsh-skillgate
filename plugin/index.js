@@ -62,8 +62,35 @@ export function apply(ctx, config = {}) {
   // state.json 存在但解析不了时，先把原文件留个备份，别让默认值把它盖掉。
   let corruptBackup = null
 
+  // 分档结果（§2.4 的产物）。有它就以它为准；没有才退回上面那两张内置表。
+  // 内置表只认我这台机器上的技能名，别人装上去工作档会是空的——所以才需要这个文件。
+  const tiersPath = join(dirname(statePath), 'tiers.json')
+  let tiers = null
+  let tiersAt = 0
+
+  async function refreshTiers(now) {
+    if (now - tiersAt < 5_000) return tiers
+    tiersAt = now
+    try {
+      const parsed = JSON.parse(await readFile(tiersPath, 'utf8'))
+      if (!parsed || typeof parsed !== 'object') return tiers
+      const list = (key) => (Array.isArray(parsed[key]) ? parsed[key].filter((n) => typeof n === 'string') : [])
+      const next = { work: new Set(list('work')), deliver: new Set(list('deliver')), daily: new Set(list('daily')) }
+      // 三个桶都空的文件等于没分类，别拿它把档位清空。
+      tiers = next.work.size || next.deliver.size || next.daily.size ? next : null
+    } catch {
+      tiers = null // 文件不在或坏了：保持上一份结果，没有就退回内置表
+    }
+    return tiers
+  }
+
   function bucket(name) {
     if (typeof name !== 'string') return 'daily'
+    if (tiers) {
+      if (tiers.deliver.has(name)) return 'deliver'
+      if (tiers.work.has(name)) return 'work'
+      return 'daily'
+    }
     if (deliver.has(name)) return 'deliver'
     if (work.has(name)) return 'work'
     if (/^office(-|$)/i.test(name)) return 'deliver'
@@ -189,7 +216,16 @@ export function apply(ctx, config = {}) {
       signal: payload.signal,
     })
     if (!snapshot || snapshot.complete !== true) return null
+    await refreshTiers(Date.now())
     const kept = snapshot.skills.filter((skill) => bucket(skill && skill.name) === tier)
+    // 分档文件在、但某个技能没被划进任何桶：它会被塞进日常。这在别人机器上很常见，
+    // 所以要留痕，别让它悄悄消失。
+    if (tiers && tier === 'daily') {
+      const unknown = kept
+        .map((skill) => skill && skill.name)
+        .filter((name) => typeof name === 'string' && !tiers.daily.has(name))
+      if (unknown.length) void appendLog({ event: 'unclassified', names: unknown })
+    }
     snapshots.set(key, { at: Date.now(), entries: kept })
     return createTierMessage(tier, kept)
   }
@@ -493,9 +529,12 @@ export function apply(ctx, config = {}) {
           const sessionId = String((invocation.agent && invocation.agent.id) || '')
           if (!arg || arg === 'status') {
             const current = (state.sessions && state.sessions[sessionId]) || state.default
+            const source = tiers
+              ? `分档来源 tiers.json（工作 ${tiers.work.size} / 交付 ${tiers.deliver.size} / 日常 ${tiers.daily.size}）`
+              : '分档来源：内置表（没找到 tiers.json）'
             return {
               kind: 'success',
-              text: `档位：${TIER_LABEL[current] || current}${state.enabled ? '' : '（已关闭，不生效）'}`,
+              text: `档位：${TIER_LABEL[current] || current}${state.enabled ? '' : '（已关闭，不生效）'}\n${source}`,
             }
           }
           if (arg === 'off' || arg === 'on') {
