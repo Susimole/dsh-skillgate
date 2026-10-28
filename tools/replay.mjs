@@ -5,7 +5,7 @@
 //
 // messages.json: [{ "text": "...", "at": "2026-10-28 00:44" }, ...]
 
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -55,6 +55,14 @@ async function fresh() {
       return () => {}
     },
   }
+  // 插件不再内置词表，回放得自带一份（跟使用机上那份同形）。
+  await writeFile(join(dir, 'lexicon.json'), JSON.stringify({
+    enterWork: ['帮我看', '帮我查', '帮我找', '帮我在', '帮我改', '帮我做', '是不是坏了', '用不了', '报错', '继续做', '继续改', '是我做的'],
+    exit: ['好了结束', '搞定', '收工', '先这样', '晚安', '只聊天', '别管这个', '先不弄了'],
+    veto: ['先别动手', '仅讨论', '只讨论', '几个技能', '先别改'],
+    enterDeliver: ['做成表', '出个图', '出张图', '生成表格', '做个表', '导出', '交接文件', '生成报告', '做个图', '出个表'],
+    hold: ['继续', '接着干', '接着做', '继续吧'],
+  }), 'utf8')
   apply(ctx, { statePath })
   const turn = async (text) => {
     const messagesIn = [

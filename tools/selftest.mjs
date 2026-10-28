@@ -533,6 +533,61 @@ await test('lexicon.json 存在：规则照常', async () => {
   await g.cleanup()
 })
 
+console.log('第七轮：引用与祈使')
+
+await test('引用里的触发词不算数：「把我做成表」写在引号里', async () => {
+  const g = await boot()
+  await g.turn('你好')
+  const { added } = await g.turn('讨论时引用一句「把我做成表」当例子')
+  assert.equal(catalogOf(added), undefined, '引号里的词触发了切档')
+  await g.cleanup()
+})
+
+await test('引用里的触发词不算数：代码块里提到的词', async () => {
+  const g = await boot()
+  await g.turn('你好')
+  const { added } = await g.turn('先把这个词记下来：`做成表`')
+  assert.equal(catalogOf(added), undefined, '代码块里的词触发了切档')
+  await g.cleanup()
+})
+
+await test('弯引号里的触发词也不算数', async () => {
+  const g = await boot()
+  await g.turn('你好')
+  const { added } = await g.turn('他说了一句“交接文件”，我记住了')
+  assert.equal(catalogOf(added), undefined, '弯引号里的词触发了切档')
+  await g.cleanup()
+})
+
+await test('真需求照旧：引号外还有「帮我」', async () => {
+  const g = await boot()
+  const { added } = await g.turn('帮我看看这个"报错"是怎么回事')
+  assert.equal(catalogOf(added).source.tier, 'work')
+  await g.cleanup()
+})
+
+await test('光提到「交接文件」不切交付：没有祈使', async () => {
+  const g = await boot()
+  await g.turn('你好')
+  const { added } = await g.turn('这是我们的聊天日志和交接文件，确认没丢东西')
+  assert.equal(catalogOf(added), undefined, '陈述句里的名词触发了交付档')
+  await g.cleanup()
+})
+
+await test('真让人做表：有祈使，切交付', async () => {
+  const g = await boot()
+  const { added } = await g.turn('帮我把这个做成表')
+  assert.equal(catalogOf(added).source.tier, 'deliver')
+  await g.cleanup()
+})
+
+await test('「生成一个交接文件」：带祈使，切交付', async () => {
+  const g = await boot()
+  const { added } = await g.turn('生成一个交接文件')
+  assert.equal(catalogOf(added).source.tier, 'deliver')
+  await g.cleanup()
+})
+
 console.log('')
 
 if (fail) {

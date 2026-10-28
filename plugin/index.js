@@ -261,14 +261,35 @@ export function apply(ctx, config = {}) {
     }
   }
 
+  // 引用剥离：引号、书名号、代码块里出现的词不算数。
+  // 实测误杀都长这样——「这是我们的聊天日志和交接文件」，或者讨论时引用一句「把我做成表」。
+  function stripQuoted(text) {
+    return String(text || '')
+      .replace(/```[\s\S]*?```/g, ' ')
+      .replace(/`[^`\n]*`/g, ' ')
+      .replace(/"[^"\n]*"/g, ' ')
+      .replace(/[“”][^“”]{0,200}?[“”]/g, ' ')
+      .replace(/「[^」\n]*」/g, ' ')
+      .replace(/『[^』\n]*』/g, ' ')
+      .replace(/《[^》\n]*》/g, ' ')
+      .replace(/'[^'\n]*'/g, ' ')
+  }
+
+  // 交付档这四个字最容易误伤：「这是我们的交接文件」也会命中。
+  // 定稿 §3.1 本来就要求升交付得是「祈使 + 明确对象」，所以这里补上祈使标记这一半。
+  const IMPERATIVE = /把|帮我|给我|做成|做份|做个|生成|导出|出个|出张|出份|整理成|写一份/
+
   // 否决 > 退出 > 交付 > 进入 > 续行。
   // 「先别动手，帮我看看」按否决处理；「继续」只在已经干着活时才算数（见 hold 分支）。
   function matchTier(text, lexicon) {
-    for (const rule of lexicon.veto) if (rule && text.includes(rule)) return { bucket: 'veto', rule, tier: null }
-    for (const rule of lexicon.exit) if (rule && text.includes(rule)) return { bucket: 'exit', rule, tier: 'daily' }
-    for (const rule of lexicon.enterDeliver) if (rule && text.includes(rule)) return { bucket: 'enter-deliver', rule, tier: 'deliver' }
-    for (const rule of lexicon.enterWork) if (rule && text.includes(rule)) return { bucket: 'enter-work', rule, tier: 'work' }
-    for (const rule of lexicon.hold) if (rule && text.includes(rule)) return { bucket: 'hold', rule, tier: null }
+    const bare = stripQuoted(text)
+    for (const rule of lexicon.veto) if (rule && bare.includes(rule)) return { bucket: 'veto', rule, tier: null }
+    for (const rule of lexicon.exit) if (rule && bare.includes(rule)) return { bucket: 'exit', rule, tier: 'daily' }
+    for (const rule of lexicon.enterDeliver) {
+      if (rule && bare.includes(rule) && IMPERATIVE.test(bare)) return { bucket: 'enter-deliver', rule, tier: 'deliver' }
+    }
+    for (const rule of lexicon.enterWork) if (rule && bare.includes(rule)) return { bucket: 'enter-work', rule, tier: 'work' }
+    for (const rule of lexicon.hold) if (rule && bare.includes(rule)) return { bucket: 'hold', rule, tier: null }
     return null
   }
 
