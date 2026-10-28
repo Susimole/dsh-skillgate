@@ -588,6 +588,59 @@ await test('「生成一个交接文件」：带祈使，切交付', async () =>
   await g.cleanup()
 })
 
+console.log('第八轮：词表的增删')
+
+await test('add：加进去立刻生效，下一轮就能匹配到', async () => {
+  const g = await boot({ noLexicon: true })
+  const out = await g.run('add enterWork 崩了')
+  assert.equal(out.kind, 'success')
+  const { added } = await g.turn('又崩了，帮我看看')
+  assert.equal(catalogOf(added).source.tier, 'work')
+  await g.cleanup()
+})
+
+await test('add：中文桶名也认', async () => {
+  const g = await boot({ noLexicon: true })
+  const out = await g.run('add 交付 出份报告')
+  assert.equal(out.kind, 'success')
+  assert.match(out.text, /enterDeliver/)
+  await g.cleanup()
+})
+
+await test('add：重复的不重复加', async () => {
+  const g = await boot()
+  const out = await g.run('add enterWork 报错')
+  assert.match(out.text, /已经有/)
+  await g.cleanup()
+})
+
+await test('rm：给桶删；不给桶就全桶找', async () => {
+  const g = await boot()
+  const a = await g.run('rm veto 几个技能')
+  assert.equal(a.kind, 'success')
+  const b = await g.run('rm 晚安')
+  assert.equal(b.kind, 'success')
+  assert.match(b.text, /exit/)
+  const c = await g.run('rm 不存在的话')
+  assert.equal(c.kind, 'error')
+  await g.cleanup()
+})
+
+await test('lexicon：报条数', async () => {
+  const g = await boot()
+  const out = await g.run('lexicon')
+  assert.match(out.text, /enterWork 4/)
+  await g.cleanup()
+})
+
+await test('删光了就是空词表，不自动切档', async () => {
+  const g = await boot()
+  for (const rule of ['帮我看', '帮我查', '报错', '继续做']) await g.run(`rm enterWork ${rule}`)
+  const { added } = await g.turn('帮我看一下这个报错')
+  assert.equal(catalogOf(added).source.tier, 'daily', '词表空了还在切档')
+  await g.cleanup()
+})
+
 console.log('')
 
 if (fail) {

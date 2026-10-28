@@ -261,6 +261,45 @@ export function apply(ctx, config = {}) {
     }
   }
 
+  // ---- 词表的手工入口 ----
+  // 词表不内置（§11），所以得有个能改它的办法。增长主要靠四问校准那条对话路径写的文件，
+  // 这里只负责三件事：加一条、删一条、看一眼。
+  const BUCKET_ALIASES = {
+    enterwork: 'enterWork', work: 'enterWork', 工作: 'enterWork', 进工作: 'enterWork',
+    enterdeliver: 'enterDeliver', deliver: 'enterDeliver', 交付: 'enterDeliver',
+    exit: 'exit', 退出: 'exit', 收工: 'exit',
+    veto: 'veto', 否决: 'veto',
+    hold: 'hold', 续行: 'hold',
+  }
+  const BUCKET_ORDER = ['enterWork', 'enterDeliver', 'exit', 'veto', 'hold']
+  const MAX_RULES = 60
+
+  async function readLexiconFile() {
+    const base = { ...EMPTY_LEXICON }
+    try {
+      const parsed = JSON.parse(await readFile(lexiconPath, 'utf8'))
+      for (const key of BUCKET_ORDER) {
+        if (Array.isArray(parsed[key])) {
+          base[key] = parsed[key].filter((rule) => typeof rule === 'string' && rule)
+        }
+      }
+    } catch {
+      // 文件不在就从空的开始
+    }
+    return base
+  }
+
+  async function writeLexiconFile(lexicon) {
+    const next = { schema: 1, updatedAt: new Date().toISOString().slice(0, 10) }
+    for (const key of BUCKET_ORDER) next[key] = lexicon[key]
+    await mkdir(dirname(lexiconPath), { recursive: true })
+    await writeFile(lexiconPath, JSON.stringify(next, null, 1), 'utf8')
+  }
+
+  function totalRules(lexicon) {
+    return BUCKET_ORDER.reduce((sum, key) => sum + lexicon[key].length, 0)
+  }
+
   // 引用剥离：引号、书名号、代码块里出现的词不算数。
   // 实测误杀都长这样——「这是我们的聊天日志和交接文件」，或者讨论时引用一句「把我做成表」。
   function stripQuoted(text) {
@@ -622,10 +661,11 @@ export function apply(ctx, config = {}) {
 
   const tierDefinition = {
         name: 'tier',
-        description: '切换技能档位（daily / work / deliver / off / on / status）',
-        input: { hint: 'daily | work | deliver | off | on | status' },
+        description: '技能档位：切换、分类、改词表（daily/work/deliver/off/on/status/classify/add/rm/lexicon）',
+        input: { hint: 'daily | work | deliver | off | on | status | classify [dry] | add <桶> <词> | rm [桶] <词> | lexicon' },
         handler: async (invocation) => {
-          const arg = String(invocation.rawInput || '').trim().toLowerCase()
+          const rawInput = String(invocation.rawInput || '').trim()
+          const arg = rawInput.toLowerCase()
           const state = await loadState()
           const sessionId = String((invocation.agent && invocation.agent.id) || '')
           if (!arg || arg === 'status') {
@@ -726,6 +766,56 @@ export function apply(ctx, config = {}) {
               changed.length ? `变了 ${changed.length} 条：${changed.slice(0, 6).join('、')}` : '跟现在一样',
             ].filter(Boolean).join(' · ')
             return { kind: 'success', text: `${head}（${tail}）` }
+          }
+          if (arg === 'lexicon' || arg.startsWith('add ') || arg.startsWith('rm ')) {
+            const lexicon = await readLexiconFile()
+            if (arg === 'lexicon') {
+              const parts = BUCKET_ORDER.map((key) => `${key} ${lexicon[key].length}`)
+              return {
+                kind: 'success',
+                text: `词表共 ${totalRules(lexicon)} 条：${parts.join(' · ')}${totalRules(lexicon) ? '' : '（空，不会自动切档）'}`,
+              }
+            }
+            const verb = arg.startsWith('add ') ? 'add' : 'rm'
+            const [, token = '', ...rest] = rawInput.split(/\s+/)
+            const phrase = rest.join(' ').trim()
+            const bucket = BUCKET_ALIASES[token.toLowerCase()]
+
+            if (verb === 'rm' && !bucket) {
+              // 不给桶就全桶找，删掉第一处出现的那个。
+              const target = token.trim()
+              if (!target) return { kind: 'error', text: '用法：/tier rm <词> 或 /tier rm <桶> <词>' }
+              const key = BUCKET_ORDER.find((name) => lexicon[name].includes(target))
+              if (!key) return { kind: 'error', text: `词表里没有「${target}」` }
+              lexicon[key] = lexicon[key].filter((rule) => rule !== target)
+              await writeLexiconFile(lexicon)
+              return { kind: 'success', text: `已从 ${key} 删掉「${target}」 · 还剩 ${totalRules(lexicon)} 条` }
+            }
+            if (!bucket) {
+              const names = BUCKET_ORDER.join(' / ')
+              return { kind: 'error', text: `不认识的桶：${token || '（空）'}（可用 ${names}）` }
+            }
+            const text = (verb === 'add' ? phrase : rest.join(' ').trim()) || (verb === 'rm' ? token.trim() : '')
+            if (!text) return { kind: 'error', text: `用法：/tier ${verb} ${token} <词>` }
+            if (text.length > 24) return { kind: 'error', text: '太长：一条规则最多 24 个字' }
+            if (verb === 'add') {
+              if (lexicon[bucket].includes(text)) {
+                return { kind: 'success', text: `${bucket} 里已经有「${text}」，没重复加` }
+              }
+              if (lexicon[bucket].length >= MAX_RULES) {
+                return { kind: 'error', text: `${bucket} 已经 ${MAX_RULES} 条，先删几条再加` }
+              }
+              lexicon[bucket].push(text)
+            } else {
+              if (!lexicon[bucket].includes(text)) return { kind: 'error', text: `${bucket} 里没有「${text}」` }
+              lexicon[bucket] = lexicon[bucket].filter((rule) => rule !== text)
+            }
+            await writeLexiconFile(lexicon)
+            void appendLog({ event: 'lexicon', action: verb, bucket, rule: text, total: totalRules(lexicon) })
+            return {
+              kind: 'success',
+              text: `${verb === 'add' ? '已加进' : '已从'} ${bucket} ${verb === 'add' ? '：' : '删掉：'}「${text}」 · 共 ${totalRules(lexicon)} 条`,
+            }
           }
           if (arg === 'off' || arg === 'on') {
             state.enabled = arg === 'on'
