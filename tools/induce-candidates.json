@@ -1,0 +1,152 @@
+[
+ {
+  "token": "解释一下什么是光合作用",
+  "count": 15,
+  "sessions": 6,
+  "example": "解释一下什么是光合作用"
+ },
+ {
+  "token": "好了",
+  "count": 14,
+  "sessions": 4,
+  "example": "好了"
+ },
+ {
+  "token": "告诉我",
+  "count": 11,
+  "sessions": 7,
+  "example": "告诉我你要怎么做"
+ },
+ {
+  "token": "告诉我你",
+  "count": 7,
+  "sessions": 4,
+  "example": "告诉我你要怎么做"
+ },
+ {
+  "token": "最后",
+  "count": 7,
+  "sessions": 5,
+  "example": "最后4"
+ },
+ {
+  "token": "告诉我你是哪个模型",
+  "count": 6,
+  "sessions": 3,
+  "example": "告诉我你是哪个模型"
+ },
+ {
+  "token": "这是一条测试消息",
+  "count": 6,
+  "sessions": 3,
+  "example": "这是一条测试消息"
+ },
+ {
+  "token": "开始吧",
+  "count": 6,
+  "sessions": 5,
+  "example": "开始吧"
+ },
+ {
+  "token": "接下来",
+  "count": 6,
+  "sessions": 4,
+  "example": "接下来就是推仓库和打包了"
+ },
+ {
+  "token": "顺带",
+  "count": 6,
+  "sessions": 4,
+  "example": "顺带一提做完这个之后能给桌宠单击互动做个Q弹的动效吗"
+ },
+ {
+  "token": "你先",
+  "count": 6,
+  "sessions": 3,
+  "example": "你先看看我们的台账"
+ },
+ {
+  "token": "帮我",
+  "count": 6,
+  "sessions": 3,
+  "example": "帮我在GitHub中搜一下dshmarket这个插件"
+ },
+ {
+  "token": "今晚",
+  "count": 6,
+  "sessions": 4,
+  "example": "今晚做个fact瘦身吧"
+ },
+ {
+  "token": "但是我",
+  "count": 5,
+  "sessions": 3,
+  "example": "但是我们对话了5轮"
+ },
+ {
+  "token": "桌宠",
+  "count": 5,
+  "sessions": 5,
+  "example": "桌宠进入睡觉状态时才互动"
+ },
+ {
+  "token": "自检",
+  "count": 5,
+  "sessions": 3,
+  "example": "自检完后生成交接文件放在桌面"
+ },
+ {
+  "token": "我看",
+  "count": 5,
+  "sessions": 3,
+  "example": "我看看能不能同步"
+ },
+ {
+  "token": "咱们",
+  "count": 5,
+  "sessions": 4,
+  "example": "咱们做的是点击调色板之外的部分才可关闭调色板"
+ },
+ {
+  "token": "你看",
+  "count": 5,
+  "sessions": 3,
+  "example": "你看看可以用了吗"
+ },
+ {
+  "token": "下一步是",
+  "count": 4,
+  "sessions": 3,
+  "example": "下一步是什么"
+ },
+ {
+  "token": "你试试",
+  "count": 4,
+  "sessions": 3,
+  "example": "你试试用她自己说话的方式说点东西"
+ },
+ {
+  "token": "你看看",
+  "count": 4,
+  "sessions": 3,
+  "example": "你看看可以用了吗"
+ },
+ {
+  "token": "我好",
+  "count": 4,
+  "sessions": 4,
+  "example": "我好知道问题出在哪并且做出哪些调整"
+ },
+ {
+  "token": "生成",
+  "count": 4,
+  "sessions": 3,
+  "example": "生成一个.md文档"
+ },
+ {
+  "token": "我要",
+  "count": 4,
+  "sessions": 4,
+  "example": "我要将这段内容交接给那边"
+ }
+]

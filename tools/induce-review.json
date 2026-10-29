@@ -1,0 +1,227 @@
+[
+ {
+  "token": "解释一下什么是光合作用",
+  "count": 15,
+  "sessions": 6,
+  "example": "解释一下什么是光合作用",
+  "bucket": "null",
+  "confidence": 0.95,
+  "reason": "测试问句，非真实任务"
+ },
+ {
+  "token": "好了",
+  "count": 14,
+  "sessions": 4,
+  "example": "好了",
+  "bucket": "null",
+  "confidence": 0.8,
+  "reason": "口头填充，语境歧义"
+ },
+ {
+  "token": "告诉我",
+  "count": 11,
+  "sessions": 7,
+  "example": "告诉我你要怎么做",
+  "bucket": "null",
+  "confidence": 0.8,
+  "reason": "泛问句，常伴闲聊测试"
+ },
+ {
+  "token": "告诉我你",
+  "count": 7,
+  "sessions": 4,
+  "example": "告诉我你要怎么做",
+  "bucket": "null",
+  "confidence": 0.85,
+  "reason": "常见模型自述/测试"
+ },
+ {
+  "token": "最后",
+  "count": 7,
+  "sessions": 5,
+  "example": "最后4",
+  "bucket": "null",
+  "confidence": 0.8,
+  "reason": "顺序词，不指示动作"
+ },
+ {
+  "token": "告诉我你是哪个模型",
+  "count": 6,
+  "sessions": 3,
+  "example": "告诉我你是哪个模型",
+  "bucket": "null",
+  "confidence": 0.95,
+  "reason": "模型身份测试，非任务"
+ },
+ {
+  "token": "这是一条测试消息",
+  "count": 6,
+  "sessions": 3,
+  "example": "这是一条测试消息",
+  "bucket": "null",
+  "confidence": 0.98,
+  "reason": "测试消息，非真实指令"
+ },
+ {
+  "token": "开始吧",
+  "count": 6,
+  "sessions": 5,
+  "example": "开始吧",
+  "bucket": "hold",
+  "confidence": 0.9,
+  "reason": "明确开始/继续指令"
+ },
+ {
+  "token": "接下来",
+  "count": 6,
+  "sessions": 4,
+  "example": "接下来就是推仓库和打包了",
+  "bucket": "null",
+  "confidence": 0.75,
+  "reason": "叙述连接词，非指令"
+ },
+ {
+  "token": "顺带",
+  "count": 6,
+  "sessions": 4,
+  "example": "顺带一提做完这个之后能给桌宠单击互动做个Q弹的动效吗",
+  "bucket": "null",
+  "confidence": 0.75,
+  "reason": "附带提及，信号弱"
+ },
+ {
+  "token": "你先",
+  "count": 6,
+  "sessions": 3,
+  "example": "你先看看我们的台账",
+  "bucket": "null",
+  "confidence": 0.8,
+  "reason": "后续可接阻止或检查"
+ },
+ {
+  "token": "帮我",
+  "count": 6,
+  "sessions": 3,
+  "example": "帮我在GitHub中搜一下dshmarket这个插件",
+  "bucket": "enterWork",
+  "confidence": 0.7,
+  "reason": "明确求助/执行请求"
+ },
+ {
+  "token": "今晚",
+  "count": 6,
+  "sessions": 4,
+  "example": "今晚做个fact瘦身吧",
+  "bucket": "null",
+  "confidence": 0.8,
+  "reason": "时间词，非动作"
+ },
+ {
+  "token": "但是我",
+  "count": 5,
+  "sessions": 3,
+  "example": "但是我们对话了5轮",
+  "bucket": "null",
+  "confidence": 0.9,
+  "reason": "转折口头语"
+ },
+ {
+  "token": "桌宠",
+  "count": 5,
+  "sessions": 5,
+  "example": "桌宠进入睡觉状态时才互动",
+  "bucket": "null",
+  "confidence": 0.85,
+  "reason": "项目名词，不指阶段"
+ },
+ {
+  "token": "自检",
+  "count": 5,
+  "sessions": 3,
+  "example": "自检完后生成交接文件放在桌面",
+  "bucket": "enterWork",
+  "confidence": 0.7,
+  "reason": "要求检查，偏执行"
+ },
+ {
+  "token": "我看",
+  "count": 5,
+  "sessions": 3,
+  "example": "我看看能不能同步",
+  "bucket": "null",
+  "confidence": 0.8,
+  "reason": "口语开头，语义不定"
+ },
+ {
+  "token": "咱们",
+  "count": 5,
+  "sessions": 4,
+  "example": "咱们做的是点击调色板之外的部分才可关闭调色板",
+  "bucket": "null",
+  "confidence": 0.9,
+  "reason": "人称代词，无指令"
+ },
+ {
+  "token": "你看",
+  "count": 5,
+  "sessions": 3,
+  "example": "你看看可以用了吗",
+  "bucket": "null",
+  "confidence": 0.8,
+  "reason": "口语，可能闲聊"
+ },
+ {
+  "token": "下一步是",
+  "count": 4,
+  "sessions": 3,
+  "example": "下一步是什么",
+  "bucket": "null",
+  "confidence": 0.75,
+  "reason": "可陈述可提问，歧义"
+ },
+ {
+  "token": "你试试",
+  "count": 4,
+  "sessions": 3,
+  "example": "你试试用她自己说话的方式说点东西",
+  "bucket": "enterWork",
+  "confidence": 0.65,
+  "reason": "让 agent 尝试执行"
+ },
+ {
+  "token": "你看看",
+  "count": 4,
+  "sessions": 3,
+  "example": "你看看可以用了吗",
+  "bucket": "null",
+  "confidence": 0.85,
+  "reason": "常作口语，易误触"
+ },
+ {
+  "token": "我好",
+  "count": 4,
+  "sessions": 4,
+  "example": "我好知道问题出在哪并且做出哪些调整",
+  "bucket": "null",
+  "confidence": 0.8,
+  "reason": "口语片段，无阶段含义"
+ },
+ {
+  "token": "生成",
+  "count": 4,
+  "sessions": 3,
+  "example": "生成一个.md文档",
+  "bucket": "enterDeliver",
+  "confidence": 0.85,
+  "reason": "明确产出指令"
+ },
+ {
+  "token": "我要",
+  "count": 4,
+  "sessions": 4,
+  "example": "我要将这段内容交接给那边",
+  "bucket": "null",
+  "confidence": 0.8,
+  "reason": "泛意愿词，非指令"
+ }
+]

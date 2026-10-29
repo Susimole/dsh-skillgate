@@ -21,7 +21,9 @@ from compression import zstd
 
 HOME = os.path.expanduser('~')
 SESSIONS = os.path.join(HOME, '.dsh', 'sessions')
-REPORT = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'induce-report.txt')
+HERE = os.path.dirname(os.path.abspath(__file__))
+REPORT = os.path.join(HERE, 'induce-report.txt')
+CANDIDATES = os.path.join(HERE, 'induce-candidates.json')
 
 MAGIC = b'\x28\xb5\x2f\xfd'
 
@@ -222,6 +224,9 @@ def main():
 
     text = '\n'.join(lines)
     open(REPORT, 'w', encoding='utf-8').write(text)
+    json.dump(
+        [{'token': t, 'count': c, 'sessions': n, 'example': e} for t, c, n, e in kept[:80]],
+        open(CANDIDATES, 'w', encoding='utf-8'), ensure_ascii=False, indent=1)
     print(f'写了 {REPORT}（{len(kept)} 条候选）')
 
 

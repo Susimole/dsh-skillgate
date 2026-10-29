@@ -103,13 +103,14 @@ for (const [index, message] of messages.entries()) {
 let ruleLog = []
 try {
   const raw = await readFile(join(boxDir, 'skillgate.log'), 'utf8')
-  ruleLog = raw.trim().split(String.fromCharCode(10)).map((line) => JSON.parse(line)).filter((row) => row.event === 'rule' || row.event === 'rule-skipped')
+  ruleLog = raw.trim().split(String.fromCharCode(10)).map((line) => JSON.parse(line)).filter((row) => row.event === 'rule' || row.event === 'rule-skipped' || row.event === 'rollback')
 } catch {
   ruleLog = []
 }
 await box.cleanup()
 
-console.log('共 ' + messages.length + ' 条人话，连续模式下切档 ' + rows.length + ' 次')
+const rollbacks = ruleLog.filter((row) => row.event === 'rollback').length
+console.log('共 ' + messages.length + ' 条人话，连续模式下切档 ' + rows.length + ' 次（其中无工具回退 ' + rollbacks + ' 次，回放里没有真模型调工具，这些是假象）')
 for (const row of rows) {
   console.log(String(row.index).padStart(3) + ' ' + (row.at || '') + '  ' + row.from + ' -> ' + row.to + '   «' + row.text + '»')
 }
