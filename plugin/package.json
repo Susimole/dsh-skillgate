@@ -1,9 +1,9 @@
 {
   "name": "@local/dsh-skillgate",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "SkillGate: switches the model-visible skill catalog by tier.",
+  "description": "SkillGate: 按档位（日常/工作/交付）改写模型可见的技能清单",
   "exports": {
     ".": "./index.js",
     "./locale/*.json": "./locale/*.json",
