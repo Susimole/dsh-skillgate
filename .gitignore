@@ -1,3 +1,6 @@
 probe*-report.json
 *.log
 node_modules/
+
+# 生成物，含原始语料，不进仓库
+tools/holdout-in.json
