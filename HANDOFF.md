@@ -15,6 +15,8 @@
 ## 仓库与运行态
 
 - 代码：`D:\Ai_work\skillgate`（独立 git 仓库）
+- 远端：https://github.com/Susimole/dsh-skillgate （**私有**，2026-10-30 首推）
+- 注意：这台机器的全局 `http.proxy` 指向 127.0.0.1:7897，Clash 没开时 push 会失败，用 `git -c http.proxy= push`
 - 设计：`D:\Ai_work\技能档位插件-设计定稿.md`（14 节，§13 实施边界、§14 自检记录）
 - 已安装：`@local/dsh-skillgate`（`link:D:/Ai_work/skillgate/plugin`），另有 probe1–4 四个探针仍装着
 - 运行时数据：`~/.dsh/mode/`
