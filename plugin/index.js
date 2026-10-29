@@ -484,9 +484,11 @@ export function apply(ctx, config = {}) {
     }
   }
 
-  try {
-    const tools = ctx.get('tools')
-    if (tools) {
+  // DSH 重启后 tools 服务未必已经就绪，静默失败会让 now / set_tier 全部消失（29 日实测）。
+  // 所以：立刻试一次 → 不行就等它出现 → 每轮再兜一次底。
+  function registerSkillgateTools(tools) {
+    if (!tools) return false
+    try {
       tools.register(makeTool(
         'now',
         '读取当前时间：本机时刻、本会话已进行的时长、以及有没有截止时间。想确认过了多久时调用它，不要凭感觉估。',
@@ -584,9 +586,42 @@ export function apply(ctx, config = {}) {
           return '已清除截止时间。'
         },
       ))
+      void appendLog({ event: 'tools', status: 'ok' })
+      return true
+    } catch (error) {
+      void appendLog({ event: 'tools', status: 'failed', error: String((error && error.message) || error) })
+      return false
     }
-  } catch {
-    // 工具注册失败不影响档位
+  }
+
+  const toolsNow = ctx.get('tools')
+  if (toolsNow) {
+    registerSkillgateTools(toolsNow)
+  } else {
+    void appendLog({ event: 'tools', status: 'not-ready' })
+    try {
+      ctx.inject?.(['tools'], (scope) => {
+        const late = scope && typeof scope.get === 'function' ? scope.get('tools') : null
+        if (late) registerSkillgateTools(late)
+      })
+    } catch (error) {
+      void appendLog({ event: 'tools', action: 'inject', status: 'failed', error: String((error && error.message) || error) })
+    }
+  }
+
+  let toolsHealAt = 0
+  function healTools() {
+    const now = Date.now()
+    if (now - toolsHealAt < 60_000) return
+    const tools = ctx.get('tools')
+    if (!tools || typeof tools.get !== 'function') return
+    toolsHealAt = now
+    try {
+      if (tools.get('now')) return
+    } catch {
+      return
+    }
+    if (registerSkillgateTools(tools)) void appendLog({ event: 'tools', action: 'heal', status: 'reregistered' })
   }
 
   try {
@@ -600,6 +635,7 @@ export function apply(ctx, config = {}) {
         // 只有轮首那份会被持久化，轮中注入既费 token 又不生效。
         if (step !== 1) return decision
         healTierCommand(payload.agent)
+        healTools()
         const sessionId = String((payload && payload.agent && payload.agent.id) || '')
         let tier = (state.sessions && state.sessions[sessionId]) || state.default || 'daily'
         const turn = (turnNo.get(sessionId) || 0) + 1

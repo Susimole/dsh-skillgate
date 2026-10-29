@@ -68,7 +68,10 @@ async function boot(options = {}) {
     get(name) {
       if (name === 'skills') return { snapshot }
       if (name === 'workingDirectory') return { ensure: async () => 'D:\\work' }
-      if (name === 'tools') return { register: (def) => tools.set(def.name, def) }
+      if (name === 'tools') return {
+        register: (def) => { tools.set(def.name, def); return () => tools.delete(def.name) },
+        get: (toolName) => tools.get(toolName),
+      }
       if (name === 'commands') return {
         register: (def) => { commands.set(def.name, def); return () => commands.delete(def.name) },
         find: (_agent, commandName) => (commands.has(commandName) ? commands.get(commandName) : undefined),
@@ -790,6 +793,18 @@ await test('降档不用问：模型自己就能退', async () => {
   const out = await callTool(g, 'set_tier', { tier: 'daily' })
   assert.match(out.text, /降档不用问/)
   assert.equal((await g.read()).sessions.s1, 'daily')
+  await g.cleanup()
+})
+
+console.log('第十三轮：工具也要能自愈')
+
+await test('工具被弄丢了：下一轮自己补回来', async () => {
+  const g = await boot()
+  assert.ok(g.tools.has('now'), '一开始就没注册上')
+  g.tools.clear() // 模拟 DSH 重启后 tools 服务没就绪
+  await g.turn('你好')
+  assert.ok(g.tools.has('now'), '没有自愈')
+  assert.ok(g.tools.has('set_tier'))
   await g.cleanup()
 })
 
