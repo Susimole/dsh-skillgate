@@ -1,0 +1,5 @@
+{
+ "endpoint": "http://<你的端点>/v1/chat/completions",
+ "model": "qwen3.8-27b",
+ "temperature": 0
+}

@@ -1,0 +1,31 @@
+{
+ "schema": 1,
+ "generatedAt": "2026-10-28",
+ "work": [
+  "agent-experience",
+  "coding-discipline",
+  "cordis-composition-reference",
+  "cordis-plugin-development",
+  "diagnose-windows-sandbox-acl",
+  "diagnosing-bugs",
+  "domain-modeling",
+  "editing-cordis-compositions",
+  "grilling",
+  "prototype",
+  "research",
+  "skill-creator",
+  "time-estimates",
+  "writing-for-agents"
+ ],
+ "deliver": [
+  "archify",
+  "office",
+  "office-docx",
+  "office-export-pdf",
+  "office-pptx",
+  "office-recalculate",
+  "office-render",
+  "office-xlsx"
+ ],
+ "daily": []
+}

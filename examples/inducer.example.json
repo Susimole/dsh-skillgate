@@ -1,0 +1,5 @@
+{
+ "endpoint": "https://<你的端点>/v1/chat/completions",
+ "model": "deepseek-flash",
+ "temperature": 0
+}
