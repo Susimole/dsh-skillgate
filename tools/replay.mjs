@@ -17,6 +17,7 @@ if (!file) {
 }
 
 const messages = JSON.parse(await readFile(file, 'utf8'))
+const asJson = process.argv.includes('--json')
 
 // 真实时间要喂进去：否则几十条消息在同一秒内跑完，hold 的 30 分钟窗口全乱。
 const year = new Date().getFullYear()
@@ -90,9 +91,24 @@ async function fresh() {
 const box = await fresh()
 let tier = 'daily'
 const rows = []
+let logSeen = 0
+const perMessage = []
+const readLog = async () => {
+  try {
+    const raw = await readFile(join(boxDir, 'skillgate.log'), 'utf8')
+    return raw.trim() ? raw.trim().split(String.fromCharCode(10)) : []
+  } catch {
+    return []
+  }
+}
 for (const [index, message] of messages.entries()) {
   currentAt = message.at
   await box.turn(message.text)
+  const lines = await readLog()
+  const fresh = lines.slice(logSeen)
+  logSeen = lines.length
+  const hit = fresh.map((line) => { try { return JSON.parse(line) } catch { return null } }).filter(Boolean).find((row) => row.event === 'rule')
+  perMessage.push({ index, text: message.text, bucket: hit ? hit.bucket : null, rule: hit ? hit.rule : null })
   const after = await box.tier()
   if (after !== tier) {
     rows.push({ index, at: message.at, from: tier, to: after, text: message.text.replace(/\s+/g, ' ').slice(0, 60) })
@@ -110,6 +126,16 @@ try {
 await box.cleanup()
 
 const rollbacks = ruleLog.filter((row) => row.event === 'rollback').length
+if (asJson) {
+  // 给回归打分用：每条消息的最终档位 + 命中的规则
+  const decisions = rows.map((row) => ({ index: row.index, text: row.text, from: row.from, to: row.to }))
+  process.stdout.write(JSON.stringify({
+    decisions,
+    perMessage,
+    rules: ruleLog.filter((r) => r.event === 'rule' && r.text).map((r) => ({ text: r.text, bucket: r.bucket, rule: r.rule })),
+  }, null, 1))
+  process.exit(0)
+}
 console.log('共 ' + messages.length + ' 条人话，连续模式下切档 ' + rows.length + ' 次（其中无工具回退 ' + rollbacks + ' 次，回放里没有真模型调工具，这些是假象）')
 for (const row of rows) {
   console.log(String(row.index).padStart(3) + ' ' + (row.at || '') + '  ' + row.from + ' -> ' + row.to + '   «' + row.text + '»')

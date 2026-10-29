@@ -1,0 +1,38 @@
+回放集 70 条 · 一致率 0.586 · 精确率 0.818 · 召回 0.25
+
+口径：
+  该切且切对 = hit_right；不该切且没切 = quiet_right
+  不该切却切了 = false-positive；该切没切 = miss
+
+{'hit_right': 9, 'hit_wrong': 2, 'missed': 27, 'quiet_right': 32}
+
+不一致：
+  miss           列一个中国法定节假日的表给我  got=None want=enterDeliver
+  miss           不，咱们P0bug还没修呢，你先看看交接文件，了解状况之后再开工 @C:\Users\Susim\D  got=None want=enterWork
+  miss           一条条做，不同步git仓库  got=None want=hold
+  miss           将上文查出的bug和可优化逻辑生成一份Excel表格放在桌面  got=None want=enterDeliver
+  miss           A，你检测之前记得提醒我什么时候动手，该怎么做  got=None want=veto
+  wrong          好，我不动电脑，你开始吧  got=hold want=enterWork
+  miss           没问题，然后你再看看这个：https://github.com/redhat-et/ripwire  got=None want=enterWork
+  miss           003/004可以准备开始了，开始前先将要动的东西厘清，告诉我你要怎么做，我们沟通后再开始  got=None want=veto
+  miss           感觉还是没改到点上，我想让你成为一个独立的个体，而不是靠我给你的系统提示词来生活，所以我才会说让你自  got=None want=enterWork
+  miss           https://github.com/Ebony-Vinyl/dsh-our-free-model这  got=None want=enterWork
+  miss           我选1，只删除识图地址/密钥/模型，但要做好提示，如果未来用户误使用了没有视觉的模型去识图的话就弹这  got=None want=enterWork
+  miss           A，做完之后关机，我要去上班了  got=None want=enterWork
+  miss           先备份后拆，拆完自检，做完这一切后我们再说别的，  got=None want=enterWork
+  miss           打住，我看你讲呼出的调色板直接放在设置面板中了，我需要的仅仅是最初唤出的调色板的小圆点可拖动实时变色  got=None want=veto
+  miss           好了，我打算等会去做个接入qq的计划表就睡觉，你先看看几个平台的相关板块都能阅览吗  got=None want=enterWork
+  miss           dsh plugin --profile web add dsh-onebot-qq   这个插件我  got=None want=enterWork
+  miss           过期了，你再发一个验证码来  got=None want=enterWork
+  miss           行了，你去刷一轮试试？  got=None want=enterWork
+  miss           倒也不用，我其实现在都想给你去掉那个插件，你看什么那是你的事情，我完全没必要干涉你的想法。不过话又说  got=None want=veto
+  wrong          没啥问题，开始吧，需要我的时候还是和之前一样放这个音频提醒我就好「D:\CloudMusic\张cc  got=hold want=enterWork
+  miss           我下班回来了，013可以开始了  got=None want=enterWork
+  miss           行  got=None want=hold
+  miss           先别做，针对5.开一轮模拟，你先来还是我先说？  got=None want=veto
+  miss           现在开工吧，在我睡断片之前至少能配合你多做两轮自检查bug  got=None want=enterWork
+  miss           那先做0.3和0.2可以吗，顺带自检，然后剩下三步听你的明天再说  got=None want=enterWork
+  miss           行吧，我去睡觉去了  got=None want=exit
+  miss           /tier deliver  got=None want=enterDeliver
+  miss           先1再2  got=None want=enterWork
+  miss           可以加，确实是我想的  got=None want=enterWork
